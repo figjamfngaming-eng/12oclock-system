@@ -1,426 +1,205 @@
 import os
-import sys
-import json
-import re
-from datetime import datetime, timezone
-from pathlib import Path
+import asyncio
+from datetime import datetime
 
-from flask import Flask, request, redirect, url_for, render_template, session, jsonify, flash
-import requests
+import discord
+from discord import app_commands
+import psycopg2
+import psycopg2.extras
 
-# ------------------------------------------------------------
-# Make sure "shared" is importable no matter what Render root dir is
-# (works even if Render Root Directory is set to "web")
-# /opt/render/project/src/web/app.py -> parents[1] == /opt/render/project/src
-# ------------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from shared.db import init_db, q, exec1  # noqa
-
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret-change-me")
-
-# ------------------------------------------------------------
+# ---------------------------
 # ENV
-# ------------------------------------------------------------
-DATABASE_URL = os.environ.get("DATABASE_URL")
+# ---------------------------
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
-DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID")
-DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
-DISCORD_REDIRECT_URI = os.environ.get("DISCORD_REDIRECT_URI")  # e.g. https://YOURWEB.onrender.com/oauth/discord/callback
+# Optional restrictions
+GUILD_ID = int(os.getenv("GUILD_ID", "0") or "0")  # set for faster slash sync
+ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or "0")
+ROLE_RACE_DIRECTOR_ID = int(os.getenv("ROLE_RACE_DIRECTOR_ID", "0") or "0")
 
-STEAM_OPENID_RETURN = os.environ.get("STEAM_OPENID_RETURN")  # e.g. https://YOURWEB.onrender.com/oauth/steam/return
-
-DISCORD_INVITE_URL = os.environ.get("DISCORD_INVITE_URL", "#")
-DISCORD_GUILD_ID = os.environ.get("DISCORD_GUILD_ID")
-
-# Secret used by your PC uploader script to post results
-UPLOAD_TOKEN = os.environ.get("UPLOAD_TOKEN", "")
-
-# Basic sanity: don't hard-crash if missing, but warn
+if not DISCORD_TOKEN:
+    raise RuntimeError("Missing DISCORD_TOKEN env var")
 if not DATABASE_URL:
-    print("[WARN] DATABASE_URL not set")
+    raise RuntimeError("Missing DATABASE_URL env var")
 
-# ------------------------------------------------------------
-# INIT DB (Flask 3 compatible: do it at import time)
-# ------------------------------------------------------------
-try:
-    init_db()
-    print("[OK] DB initialized")
-except Exception as e:
-    print("[WARN] init_db() failed (will retry on first request):", e)
+# ---------------------------
+# DB
+# ---------------------------
+def db_conn():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
-# ------------------------------------------------------------
-# AMA-style points tables (CONFIG HERE)
-# You can change these exactly how you want later.
-# ------------------------------------------------------------
-AMA_MX_POINTS = [
-    50, 47, 45, 43, 41, 40, 39, 38, 37, 36,
-    35, 34, 33, 32, 31, 30, 29, 28, 27, 26,
-    25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
-    15, 14, 13, 12, 11, 10, 9, 8, 7, 6
-]
-AMA_SX_POINTS = [
-    26, 23, 21, 19, 17, 15, 14, 13, 12, 11,
-    10, 9, 8, 7, 6, 5, 4, 3, 2, 1
-]
+def init_db():
+    ddl = """
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        discord_user_id BIGINT UNIQUE,
+        discord_tag TEXT,
+        steam_id TEXT,
+        mxb_name TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
 
-def points_for(mode: str, position: int) -> int:
-    mode = (mode or "").upper().strip()
-    if position <= 0:
-        return 0
-    if mode == "SX":
-        return AMA_SX_POINTS[position - 1] if position <= len(AMA_SX_POINTS) else 0
-    # default to MX
-    return AMA_MX_POINTS[position - 1] if position <= len(AMA_MX_POINTS) else 0
+    CREATE TABLE IF NOT EXISTS events (
+        id SERIAL PRIMARY KEY,
+        mode TEXT NOT NULL,
+        class_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        season INT NOT NULL DEFAULT 1,
+        track TEXT,
+        notes TEXT,
+        start_time TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
 
+    CREATE TABLE IF NOT EXISTS race_results (
+        id SERIAL PRIMARY KEY,
+        event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        source TEXT DEFAULT 'upload',
+        uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+        raw_html TEXT,
+        parsed_json JSONB
+    );
 
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
-def current_user():
-    uid = session.get("user_id")
-    if not uid:
-        return None
-    rows = q("SELECT * FROM users WHERE id=%s", [uid])
-    return rows[0] if rows else None
+    CREATE TABLE IF NOT EXISTS standings_points (
+        id SERIAL PRIMARY KEY,
+        event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        class_name TEXT NOT NULL,
+        rider_name TEXT NOT NULL,
+        points INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    """
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(ddl)
+        conn.commit()
 
-def require_login():
-    u = current_user()
-    if not u:
-        return redirect(url_for("signup"))
-    return None
+init_db()
 
-def user_is_fully_linked(u) -> bool:
-    # Require Discord + Steam + MXB ingame name for "fully registered"
-    return bool(u.get("discord_id") and u.get("steam_id") and u.get("mxb_name"))
+# ---------------------------
+# Discord
+# ---------------------------
+intents = discord.Intents.default()
 
-def safe_init_db_retry():
-    try:
-        init_db()
-    except Exception as e:
-        print("[WARN] init_db retry failed:", e)
+class LeagueBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
 
-@app.before_request
-def _ensure_db():
-    # light retry if init failed during boot
-    safe_init_db_retry()
-
-
-# ------------------------------------------------------------
-# Pages
-# ------------------------------------------------------------
-@app.route("/")
-def home():
-    u = current_user()
-    return render_template("home.html", user=u, invite_url=DISCORD_INVITE_URL)
-
-@app.route("/rules")
-def rules():
-    u = current_user()
-    return render_template("rules.html", user=u)
-
-@app.route("/events")
-def events():
-    u = current_user()
-    evs = q("SELECT * FROM events ORDER BY start_time DESC LIMIT 100")
-    return render_template("events.html", user=u, events=evs)
-
-@app.route("/standings")
-def standings():
-    u = current_user()
-    # Standings split by CLASS (250/450 etc) and MODE (MX/SX)
-    # Points = sum(results.points) + sum(penalties.points_delta)
-    rows = q("""
-        SELECT
-          e.mode,
-          e.class,
-          u.id as user_id,
-          COALESCE(u.mxb_name, u.username) AS rider,
-          COALESCE(SUM(r.points), 0) +
-          COALESCE((SELECT SUM(p.points_delta) FROM penalties p WHERE p.user_id=u.id), 0) AS total_points,
-          COUNT(DISTINCT r.event_id) as events_count
-        FROM users u
-        JOIN results r ON r.user_id = u.id
-        JOIN events e ON e.id = r.event_id
-        GROUP BY e.mode, e.class, u.id, rider
-        ORDER BY e.mode, e.class, total_points DESC
-    """)
-    # group for template
-    grouped = {}
-    for row in rows:
-        key = f"{row['mode']}_{row['class']}"
-        grouped.setdefault(key, []).append(row)
-    return render_template("standings.html", user=u, grouped=grouped)
-
-@app.route("/signup")
-def signup():
-    u = current_user()
-    return render_template("signup.html", user=u, invite_url=DISCORD_INVITE_URL)
-
-@app.route("/profile", methods=["GET", "POST"])
-def profile():
-    u = current_user()
-    if not u:
-        return redirect(url_for("signup"))
-
-    if request.method == "POST":
-        mxb_name = request.form.get("mxb_name", "").strip()
-        if not mxb_name:
-            flash("MX Bikes in-game name is required.", "error")
+    async def setup_hook(self):
+        # Sync commands to a single guild for fast updates (recommended)
+        if GUILD_ID:
+            guild = discord.Object(id=GUILD_ID)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
         else:
-            exec1("UPDATE users SET mxb_name=%s WHERE id=%s", [mxb_name, u["id"]])
-            flash("Saved MX Bikes in-game name.", "success")
-        return redirect(url_for("profile"))
+            await self.tree.sync()
 
-    # refresh
-    u = current_user()
-    return render_template("profile.html", user=u)
+client = LeagueBot()
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("home"))
+def is_race_director(interaction: discord.Interaction) -> bool:
+    if ROLE_RACE_DIRECTOR_ID == 0:
+        # if you didn't set a role, allow admins
+        return interaction.user.guild_permissions.administrator
+    return any(getattr(r, "id", None) == ROLE_RACE_DIRECTOR_ID for r in getattr(interaction.user, "roles", []))
 
+# ---------------------------
+# Commands
+# ---------------------------
+@client.tree.command(name="ping", description="Check if the league bot is online")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("✅ Pong! AMA League bot online.", ephemeral=True)
 
-# ------------------------------------------------------------
-# Discord OAuth
-# ------------------------------------------------------------
-@app.route("/oauth/discord")
-def oauth_discord():
-    # Create local user if not exists
-    if not session.get("user_id"):
-        row = exec1("INSERT INTO users(username) VALUES(%s) RETURNING *", ["new-user"])
-        session["user_id"] = row["id"]
+@client.tree.command(name="create_event", description="Create a new event (Race Director only)")
+@app_commands.describe(
+    mode="MX / SX / ENDURO",
+    class_name="450 / 250 / etc",
+    title="Event title",
+    season="Season number",
+    track="Track name",
+    start="Start time text (optional)",
+    notes="Notes (optional)"
+)
+async def create_event(
+    interaction: discord.Interaction,
+    mode: str,
+    class_name: str,
+    title: str,
+    season: int = 1,
+    track: str = "",
+    start: str = "",
+    notes: str = "",
+):
+    if not is_race_director(interaction):
+        await interaction.response.send_message("❌ You must be Race Director/Admin to use this.", ephemeral=True)
+        return
 
-    scope = "identify"
-    return redirect(
-        "https://discord.com/api/oauth2/authorize"
-        f"?client_id={DISCORD_CLIENT_ID}"
-        f"&redirect_uri={requests.utils.quote(DISCORD_REDIRECT_URI, safe='')}"
-        f"&response_type=code"
-        f"&scope={scope}"
-    )
+    start_dt = None
+    if start.strip():
+        # store as text-ish; you can standardize later
+        try:
+            start_dt = datetime.fromisoformat(start.strip())
+        except Exception:
+            start_dt = None
 
-@app.route("/oauth/discord/callback")
-def oauth_discord_callback():
-    if not session.get("user_id"):
-        return redirect(url_for("signup"))
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO events (mode, class_name, title, season, track, notes, start_time)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                RETURNING *;
+                """,
+                (mode.strip().upper(), class_name.strip(), title.strip(), int(season), track.strip(), notes.strip(), start_dt),
+            )
+            ev = cur.fetchone()
+        conn.commit()
 
-    code = request.args.get("code")
-    if not code:
-        flash("Discord login failed: no code", "error")
-        return redirect(url_for("signup"))
+    msg = f"✅ Event created: **#{ev['id']}** — {ev['mode']} {ev['class_name']} — **{ev['title']}**"
+    await interaction.response.send_message(msg, ephemeral=True)
 
-    data = {
-        "client_id": DISCORD_CLIENT_ID,
-        "client_secret": DISCORD_CLIENT_SECRET,
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": DISCORD_REDIRECT_URI,
-        "scope": "identify",
-    }
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    token_resp = requests.post("https://discord.com/api/oauth2/token", data=data, headers=headers)
-    token_resp.raise_for_status()
-    access_token = token_resp.json()["access_token"]
+@client.tree.command(name="announce_event", description="Post an event card in race announcements (Race Director only)")
+@app_commands.describe(event_id="Event ID to announce")
+async def announce_event(interaction: discord.Interaction, event_id: int):
+    if not is_race_director(interaction):
+        await interaction.response.send_message("❌ You must be Race Director/Admin to use this.", ephemeral=True)
+        return
 
-    me = requests.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
-    me.raise_for_status()
-    me_json = me.json()
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM events WHERE id=%s;", (int(event_id),))
+            ev = cur.fetchone()
+        conn.commit()
 
-    discord_id = int(me_json["id"])
-    username = f"{me_json.get('username','user')}#{me_json.get('discriminator','0000')}"
-
-    exec1(
-        "UPDATE users SET discord_id=%s, username=%s WHERE id=%s",
-        [discord_id, username, session["user_id"]],
-    )
-
-    flash("Discord linked ✅", "success")
-    return redirect(url_for("profile"))
-
-
-# ------------------------------------------------------------
-# Steam OpenID (simple redirect helper)
-# NOTE: for a full OpenID verify, keep your existing logic in templates/links.
-# ------------------------------------------------------------
-@app.route("/oauth/steam")
-def oauth_steam():
-    # You can keep your existing OpenID logic; this is placeholder redirect helper.
-    if not session.get("user_id"):
-        return redirect(url_for("signup"))
-    flash("Steam linking is configured via OpenID return URL.", "info")
-    return redirect(url_for("profile"))
-
-@app.route("/oauth/steam/return")
-def oauth_steam_return():
-    # If you already built parsing earlier, keep it.
-    # Minimal version: read steamid from query if your flow passes it.
-    if not session.get("user_id"):
-        return redirect(url_for("signup"))
-
-    steam_id = request.args.get("steam_id", "").strip()
-    if not steam_id:
-        flash("Steam link failed: missing steam_id", "error")
-        return redirect(url_for("profile"))
-
-    exec1("UPDATE users SET steam_id=%s WHERE id=%s", [steam_id, session["user_id"]])
-    flash("Steam linked ✅", "success")
-    return redirect(url_for("profile"))
-
-
-# ------------------------------------------------------------
-# Results Upload UI Page (admin/manual)
-# ------------------------------------------------------------
-@app.route("/results/upload", methods=["GET"])
-def results_upload_page():
-    u = current_user()
-    if not u:
-        return redirect(url_for("signup"))
-    evs = q("SELECT * FROM events ORDER BY start_time DESC LIMIT 50")
-    return render_template("upload_results.html", user=u, events=evs)
-
-# ------------------------------------------------------------
-# API: upload results (THIS POWERS THE "PRO AUTOMATION UPLOADER")
-# POST /api/results/upload
-# Headers: X-Upload-Token: <UPLOAD_TOKEN>
-# Body (multipart):
-#  - event_id (int)
-#  - export_html (file) OR export_text (string)
-# ------------------------------------------------------------
-@app.route("/api/results/upload", methods=["POST"])
-def api_results_upload():
-    if not UPLOAD_TOKEN:
-        return jsonify({"ok": False, "error": "UPLOAD_TOKEN not set on server"}), 500
-
-    token = request.headers.get("X-Upload-Token", "")
-    if token != UPLOAD_TOKEN:
-        return jsonify({"ok": False, "error": "unauthorized"}), 401
-
-    try:
-        event_id = int(request.form.get("event_id", "0"))
-    except Exception:
-        event_id = 0
-    if not event_id:
-        return jsonify({"ok": False, "error": "event_id required"}), 400
-
-    export_text = request.form.get("export_text", "")
-    if "export_html" in request.files:
-        export_text = request.files["export_html"].read().decode("utf-8", errors="ignore")
-
-    if not export_text or len(export_text) < 100:
-        return jsonify({"ok": False, "error": "export html/text missing"}), 400
-
-    # Get event info (mode/class)
-    ev = q("SELECT * FROM events WHERE id=%s", [event_id])
     if not ev:
-        return jsonify({"ok": False, "error": "event not found"}), 404
-    ev = ev[0]
-    mode = (ev["mode"] or "MX").upper()
+        await interaction.response.send_message("❌ Event not found.", ephemeral=True)
+        return
 
-    # Parse MXB export html:
-    # Your exports look like HTML tables; we detect rows and extract position + name + time.
-    parsed = parse_mxb_export_html(export_text)
-    if not parsed:
-        return jsonify({"ok": False, "error": "could not parse export"}), 400
+    embed = discord.Embed(
+        title=f"🏁 {ev['mode']} {ev['class_name']} — {ev['title']}",
+        description=(ev["notes"] or "").strip() or "Race event created.",
+        color=0x7C3AED,
+    )
+    if ev.get("track"):
+        embed.add_field(name="Track", value=ev["track"], inline=True)
+    embed.add_field(name="Season", value=str(ev["season"]), inline=True)
+    if ev.get("start_time"):
+        embed.add_field(name="Start", value=str(ev["start_time"]), inline=False)
 
-    # Wipe existing results for this event and re-insert
-    exec1("DELETE FROM results WHERE event_id=%s", [event_id])
+    embed.set_footer(text=f"Event ID: {ev['id']}")
 
-    inserted = 0
-    for row in parsed:
-        pos = row["position"]
-        raw_name = row["name"]
-        time_text = row.get("time")
+    # Post to selected channel, else current channel
+    channel = None
+    if ANNOUNCE_CHANNEL_ID:
+        channel = interaction.guild.get_channel(ANNOUNCE_CHANNEL_ID)
+    if channel is None:
+        channel = interaction.channel
 
-        # match to user by MXB name (case-insensitive)
-        user = q("SELECT id FROM users WHERE LOWER(mxb_name)=LOWER(%s) LIMIT 1", [raw_name])
-        user_id = user[0]["id"] if user else None
+    await channel.send(embed=embed)
+    await interaction.response.send_message("✅ Announced.", ephemeral=True)
 
-        pts = points_for(mode, pos)
-
-        exec1(
-            """
-            INSERT INTO results(event_id, position, raw_name, user_id, points, time_text)
-            VALUES(%s,%s,%s,%s,%s,%s)
-            ON CONFLICT(event_id, position) DO UPDATE SET
-              raw_name=EXCLUDED.raw_name,
-              user_id=EXCLUDED.user_id,
-              points=EXCLUDED.points,
-              time_text=EXCLUDED.time_text
-            RETURNING id
-            """,
-            [event_id, pos, raw_name, user_id, pts, time_text],
-        )
-        inserted += 1
-
-    return jsonify({"ok": True, "event_id": event_id, "inserted": inserted})
-
-
-def parse_mxb_export_html(html: str):
-    """
-    Tries to parse PiBoSo MX Bikes export HTML.
-    We look for table rows and pull:
-      - position
-      - rider name
-      - time (optional)
-    """
-    # Normalize
-    html = html.replace("\r", "")
-
-    # Quick extract rows
-    # This is intentionally tolerant to different export layouts
-    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, flags=re.IGNORECASE | re.DOTALL)
-    out = []
-    for r in rows:
-        cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", r, flags=re.IGNORECASE | re.DOTALL)
-        cols = [re.sub(r"<.*?>", "", c).strip() for c in cols]
-        cols = [c for c in cols if c]
-
-        # Common layouts:
-        # [Pos, Name, ... , Time]
-        if len(cols) >= 2:
-            # find first int in first column
-            m = re.match(r"^(\d+)$", cols[0])
-            if not m:
-                continue
-            pos = int(m.group(1))
-            name = cols[1].strip()
-            if not name:
-                continue
-
-            # optional time: last col that looks like mm:ss.xxx or hh:mm:ss.xxx
-            time_text = None
-            for c in reversed(cols):
-                if re.search(r"\d+:\d+(\.\d+)?", c):
-                    time_text = c
-                    break
-
-            out.append({"position": pos, "name": name, "time": time_text})
-
-    # Sort by position
-    out.sort(key=lambda x: x["position"])
-    return out
-
-
-# ------------------------------------------------------------
-# API: Discord stats (widget)
-# ------------------------------------------------------------
-@app.route("/api/discord_stats")
-def api_discord_stats():
-    data = {
-        "guild_id": DISCORD_GUILD_ID,
-        "invite_url": DISCORD_INVITE_URL,
-    }
-    return jsonify(data)
-
-
-# ------------------------------------------------------------
-# Health
-# ------------------------------------------------------------
-@app.route("/healthz")
-def healthz():
-    return "ok", 200
+# ---------------------------
+# Run
+# ---------------------------
+client.run(DISCORD_TOKEN)
