@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Riders</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head><body>
+<div class="bg"></div>
+<div class="wrap">
+  <a class="btn btn-outline" href="/">← Home</a>
+  <div class="card">
+    <h2>Registered Riders</h2>
+    <ul>
+      {% for r in riders %}
+        <li>{{ r.discord_name }} — SteamID: {{ r.steam_id if r.steam_id else "—" }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+</body></html>

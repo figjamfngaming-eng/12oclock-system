@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Profile</h1>
+  <p class="muted">Your MX Bikes in‑game name is how results match to you.</p>
+
+  <form method="post" class="form">
+    <label>Discord</label>
+    <div class="input readonly">{{ user.discord_username }}</div>
+
+    <label>MX Bikes In‑Game Name</label>
+    <input class="input" name="mxb_name" value="{{ user.mxb_name or '' }}" placeholder="Exactly as it appears in results"/>
+
+    <button class="btn" type="submit">Save</button>
+  </form>
+
+  <hr class="hr"/>
+
+  <h2>Account Linking</h2>
+  <div class="grid2">
+    <div class="card inner">
+      <h3>Steam</h3>
+      {% if user.steam_id %}
+        <p class="muted">Linked: {{ user.steam_id }} {% if user.steam_persona %} ({{ user.steam_persona }}) {% endif %}</p>
+      {% else %}
+        <p class="muted">Optional — link Steam for identity verification.</p>
+        <a class="btn" href="{{ url_for('steam_login') }}">Link Steam</a>
+      {% endif %}
+    </div>
+
+    <div class="card inner">
+      <h3>Results Upload</h3>
+      <p class="muted">After a race, export results to HTML and upload it.</p>
+      <a class="btn" href="{{ url_for('upload_page') }}">Upload Export</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

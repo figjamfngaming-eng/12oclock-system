@@ -1,0 +1,13 @@
+# Web
+Flask==3.0.2
+gunicorn==21.2.0
+psycopg2-binary==2.9.9
+requests==2.32.3
+python-dotenv==1.0.1
+
+# Bot
+discord.py==2.4.0
+
+# Utils
+beautifulsoup4==4.12.3
+lxml==5.2.2

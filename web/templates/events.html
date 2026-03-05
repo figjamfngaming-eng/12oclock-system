@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Events</h1>
+  <p class="muted">Latest 100 events</p>
+
+  <div class="table">
+    <div class="tr head">
+      <div>ID</div><div>Mode</div><div>Class</div><div>Title</div><div>Season</div><div>Start</div><div>Track</div>
+    </div>
+    {% for e in events %}
+      <div class="tr">
+        <div>{{ e.id }}</div>
+        <div><span class="tag">{{ e.mode }}</span></div>
+        <div><span class="tag">{{ e.class }}</span></div>
+        <div>{{ e.title }}</div>
+        <div>{{ e.season }}</div>
+        <div>{{ e.start_time }}</div>
+        <div>{{ e.track }}</div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if user %}
+    <div class="row">
+      <a class="btn" href="{{ url_for('upload_page') }}">Upload Results</a>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

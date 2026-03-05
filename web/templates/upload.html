@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Upload MX Bikes Export</h1>
+  <p class="muted">Pick an event, then upload the export <b>.html</b> from Documents\PiBoSo\MX Bikes\exports</p>
+
+  <form method="post" enctype="multipart/form-data" class="form">
+    <label>Event</label>
+    <select class="input" name="event_id" required>
+      <option value="">Select event…</option>
+      {% for e in events %}
+        <option value="{{ e.id }}">#{{ e.id }} — {{ e.mode }} {{ e.class }} — {{ e.title }} ({{ e.start_time }})</option>
+      {% endfor %}
+    </select>
+
+    <label>Export HTML file</label>
+    <input class="input" type="file" name="file" accept=".html,.htm" required/>
+
+    <button class="btn" type="submit">Import Results</button>
+  </form>
+</section>
+{% endblock %}
