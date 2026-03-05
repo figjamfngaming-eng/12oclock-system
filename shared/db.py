@@ -1,10 +1,11 @@
 import os
 import psycopg2
+from psycopg2.extras import RealDictCursor
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 def init_db():
     conn = get_conn()
@@ -44,3 +45,22 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
+
+
+def exec1(query, params=None):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def q(query, params=None):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    result = cur.fetchall()
+    cur.close()
+    conn.close()
+    return result
