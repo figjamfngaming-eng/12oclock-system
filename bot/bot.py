@@ -1,205 +1,190 @@
 import os
-import asyncio
-from datetime import datetime
+import sys
+from pathlib import Path
+
+# ✅ Make sibling folders importable (shared/) even when Render Root Directory = bot
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import discord
 from discord import app_commands
-import psycopg2
-import psycopg2.extras
+from discord.ext import commands
 
-# ---------------------------
-# ENV
-# ---------------------------
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+from shared.db import init_db, q, exec1
 
-# Optional restrictions
-GUILD_ID = int(os.getenv("GUILD_ID", "0") or "0")  # set for faster slash sync
-ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or "0")
-ROLE_RACE_DIRECTOR_ID = int(os.getenv("ROLE_RACE_DIRECTOR_ID", "0") or "0")
 
-if not DISCORD_TOKEN:
-    raise RuntimeError("Missing DISCORD_TOKEN env var")
-if not DATABASE_URL:
-    raise RuntimeError("Missing DATABASE_URL env var")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
+GUILD_ID = os.getenv("GUILD_ID", "")  # optional: speeds up slash command updates
+ANNOUNCE_CHANNEL_ID = os.getenv("ANNOUNCE_CHANNEL_ID", "")
+RACE_DIRECTOR_ROLE_ID = os.getenv("ROLE_RACE_DIRECTOR_ID", "")
 
-# ---------------------------
-# DB
-# ---------------------------
-def db_conn():
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://one2oclock-system.onrender.com").rstrip("/")
 
-def init_db():
-    ddl = """
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        discord_user_id BIGINT UNIQUE,
-        discord_tag TEXT,
-        steam_id TEXT,
-        mxb_name TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
 
-    CREATE TABLE IF NOT EXISTS events (
-        id SERIAL PRIMARY KEY,
-        mode TEXT NOT NULL,
-        class_name TEXT NOT NULL,
-        title TEXT NOT NULL,
-        season INT NOT NULL DEFAULT 1,
-        track TEXT,
-        notes TEXT,
-        start_time TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS race_results (
-        id SERIAL PRIMARY KEY,
-        event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-        source TEXT DEFAULT 'upload',
-        uploaded_at TIMESTAMPTZ DEFAULT NOW(),
-        raw_html TEXT,
-        parsed_json JSONB
-    );
-
-    CREATE TABLE IF NOT EXISTS standings_points (
-        id SERIAL PRIMARY KEY,
-        event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-        class_name TEXT NOT NULL,
-        rider_name TEXT NOT NULL,
-        points INT NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-    """
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(ddl)
-        conn.commit()
-
-init_db()
-
-# ---------------------------
-# Discord
-# ---------------------------
 intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-class LeagueBot(discord.Client):
-    def __init__(self):
-        super().__init__(intents=intents)
-        self.tree = app_commands.CommandTree(self)
 
-    async def setup_hook(self):
-        # Sync commands to a single guild for fast updates (recommended)
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+def is_race_director(member: discord.Member) -> bool:
+    if not RACE_DIRECTOR_ROLE_ID:
+        return False
+    return any(str(r.id) == str(RACE_DIRECTOR_ROLE_ID) for r in member.roles)
+
+
+@bot.event
+async def on_ready():
+    print(f"[BOT] Logged in as {bot.user}")
+
+    # ✅ init DB safely
+    try:
+        init_db()
+    except Exception as e:
+        print("[WARN] init_db failed:", e)
+
+    # ✅ Slash command sync
+    try:
+        if GUILD_ID and str(GUILD_ID).isdigit():
+            guild = discord.Object(id=int(GUILD_ID))
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            print("[BOT] Synced commands to guild", GUILD_ID)
         else:
-            await self.tree.sync()
+            await bot.tree.sync()
+            print("[BOT] Synced global commands")
+    except Exception as e:
+        print("[BOT] Sync error:", e)
 
-client = LeagueBot()
 
-def is_race_director(interaction: discord.Interaction) -> bool:
-    if ROLE_RACE_DIRECTOR_ID == 0:
-        # if you didn't set a role, allow admins
-        return interaction.user.guild_permissions.administrator
-    return any(getattr(r, "id", None) == ROLE_RACE_DIRECTOR_ID for r in getattr(interaction.user, "roles", []))
-
-# ---------------------------
-# Commands
-# ---------------------------
-@client.tree.command(name="ping", description="Check if the league bot is online")
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Pong! AMA League bot online.", ephemeral=True)
-
-@client.tree.command(name="create_event", description="Create a new event (Race Director only)")
+# ----------------------------
+# /create_event (Race Director)
+# ----------------------------
+@bot.tree.command(name="create_event", description="Create a new race event (Race Director only).")
 @app_commands.describe(
-    mode="MX / SX / ENDURO",
-    class_name="450 / 250 / etc",
-    title="Event title",
+    title="Event title (e.g. Round 1)",
+    mode="MX or SX",
+    bike_class="450 / 250 / 2T",
     season="Season number",
+    start_ts="Start time (ISO) e.g. 2026-03-10 20:00",
     track="Track name",
-    start="Start time text (optional)",
-    notes="Notes (optional)"
+    notes="Notes",
 )
 async def create_event(
     interaction: discord.Interaction,
-    mode: str,
-    class_name: str,
     title: str,
-    season: int = 1,
-    track: str = "",
-    start: str = "",
+    mode: str,
+    bike_class: str,
+    season: int,
+    start_ts: str,
+    track: str,
     notes: str = "",
 ):
-    if not is_race_director(interaction):
-        await interaction.response.send_message("❌ You must be Race Director/Admin to use this.", ephemeral=True)
-        return
+    if not interaction.user or not isinstance(interaction.user, discord.Member):
+        return await interaction.response.send_message("Run this inside the server.", ephemeral=True)
 
-    start_dt = None
-    if start.strip():
-        # store as text-ish; you can standardize later
-        try:
-            start_dt = datetime.fromisoformat(start.strip())
-        except Exception:
-            start_dt = None
+    if not is_race_director(interaction.user):
+        return await interaction.response.send_message("Race Director only.", ephemeral=True)
 
-    with db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                INSERT INTO events (mode, class_name, title, season, track, notes, start_time)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-                RETURNING *;
-                """,
-                (mode.strip().upper(), class_name.strip(), title.strip(), int(season), track.strip(), notes.strip(), start_dt),
-            )
-            ev = cur.fetchone()
-        conn.commit()
+    await interaction.response.defer(ephemeral=True)
 
-    msg = f"✅ Event created: **#{ev['id']}** — {ev['mode']} {ev['class_name']} — **{ev['title']}**"
-    await interaction.response.send_message(msg, ephemeral=True)
-
-@client.tree.command(name="announce_event", description="Post an event card in race announcements (Race Director only)")
-@app_commands.describe(event_id="Event ID to announce")
-async def announce_event(interaction: discord.Interaction, event_id: int):
-    if not is_race_director(interaction):
-        await interaction.response.send_message("❌ You must be Race Director/Admin to use this.", ephemeral=True)
-        return
-
-    with db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM events WHERE id=%s;", (int(event_id),))
-            ev = cur.fetchone()
-        conn.commit()
-
-    if not ev:
-        await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-        return
-
-    embed = discord.Embed(
-        title=f"🏁 {ev['mode']} {ev['class_name']} — {ev['title']}",
-        description=(ev["notes"] or "").strip() or "Race event created.",
-        color=0x7C3AED,
+    # store event
+    row = exec1(
+        "INSERT INTO events (mode, class, title, season, start_ts, track, notes) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        (mode.upper(), bike_class, title, season, start_ts, track, notes),
     )
-    if ev.get("track"):
-        embed.add_field(name="Track", value=ev["track"], inline=True)
-    embed.add_field(name="Season", value=str(ev["season"]), inline=True)
-    if ev.get("start_time"):
-        embed.add_field(name="Start", value=str(ev["start_time"]), inline=False)
+    event_id = row["id"]
 
-    embed.set_footer(text=f"Event ID: {ev['id']}")
+    # announce
+    msg = (
+        f"🏁 **{mode.upper()} {bike_class} — {title}**\n"
+        f"Season: **{season}**\n"
+        f"Start: **{start_ts}**\n"
+        f"Track: **{track}**\n"
+        f"Notes: {notes or '-'}\n\n"
+        f"Event ID: **{event_id}**\n"
+        f"Upload results: {WEBSITE_URL}/upload\n"
+        f"Event page: {WEBSITE_URL}/events/{event_id}\n"
+    )
 
-    # Post to selected channel, else current channel
-    channel = None
-    if ANNOUNCE_CHANNEL_ID:
-        channel = interaction.guild.get_channel(ANNOUNCE_CHANNEL_ID)
-    if channel is None:
-        channel = interaction.channel
+    if ANNOUNCE_CHANNEL_ID and str(ANNOUNCE_CHANNEL_ID).isdigit():
+        ch = bot.get_channel(int(ANNOUNCE_CHANNEL_ID))
+        if ch:
+            await ch.send(msg)
 
-    await channel.send(embed=embed)
-    await interaction.response.send_message("✅ Announced.", ephemeral=True)
+    await interaction.followup.send(f"✅ Event created (ID {event_id}).", ephemeral=True)
 
-# ---------------------------
-# Run
-# ---------------------------
-client.run(DISCORD_TOKEN)
+
+# ----------------------------
+# /standings (this fixes your “standing” issue)
+# ----------------------------
+@bot.tree.command(name="standings", description="Show standings link (and top 10) for a class.")
+@app_commands.describe(bike_class="450 / 250 / 2T")
+async def standings(interaction: discord.Interaction, bike_class: str):
+    await interaction.response.defer(ephemeral=False)
+
+    # Pull top 10 from DB (bot reads same DB as web)
+    rows = q(
+        "SELECT u.mxb_name, u.discord_name, COALESCE(SUM(r.points),0) AS points "
+        "FROM users u "
+        "JOIN results r ON r.user_id=u.id "
+        "JOIN events e ON e.id=r.event_id "
+        "WHERE e.class=%s "
+        "GROUP BY u.mxb_name, u.discord_name "
+        "ORDER BY points DESC, u.mxb_name ASC "
+        "LIMIT 10",
+        (bike_class,),
+    )
+
+    lines = []
+    for i, r in enumerate(rows, start=1):
+        name = r["mxb_name"] or r["discord_name"] or "Unknown"
+        lines.append(f"**{i}.** {name} — **{int(r['points'])}** pts")
+
+    text = (
+        f"🏆 **Standings ({bike_class})**\n"
+        f"{WEBSITE_URL}/standings?class={bike_class}\n\n"
+        + ("\n".join(lines) if lines else "_No points yet for this class._")
+    )
+
+    await interaction.followup.send(text)
+
+
+# ----------------------------
+# /penalty (Race Director)
+# ----------------------------
+@bot.tree.command(name="penalty", description="Apply a points penalty to a rider (Race Director only).")
+@app_commands.describe(event_id="Event ID", mxb_name="Rider MXB name", points="Negative number e.g. -5", reason="Reason")
+async def penalty(interaction: discord.Interaction, event_id: int, mxb_name: str, points: int, reason: str = ""):
+    if not interaction.user or not isinstance(interaction.user, discord.Member):
+        return await interaction.response.send_message("Run this inside the server.", ephemeral=True)
+
+    if not is_race_director(interaction.user):
+        return await interaction.response.send_message("Race Director only.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+
+    user = q("SELECT id FROM users WHERE LOWER(mxb_name)=LOWER(%s) LIMIT 1", (mxb_name.strip(),))
+    if not user:
+        return await interaction.followup.send("❌ Rider not found (MXB name must match profile).", ephemeral=True)
+
+    uid = user[0]["id"]
+
+    # upsert penalty row (store as result row with negative points if no result exists)
+    existing = q("SELECT id, points FROM results WHERE event_id=%s AND user_id=%s", (event_id, uid))
+    if existing:
+        new_points = int(existing[0]["points"]) + int(points)
+        exec1("UPDATE results SET points=%s WHERE id=%s", (new_points, existing[0]["id"]))
+    else:
+        exec1(
+            "INSERT INTO results (event_id, user_id, position, points, raw_json) VALUES (%s,%s,%s,%s,%s)",
+            (event_id, uid, 999, int(points), f"penalty:{reason}"),
+        )
+
+    await interaction.followup.send(f"✅ Penalty applied to **{mxb_name}** ({points} pts). {reason}", ephemeral=True)
+
+
+if __name__ == "__main__":
+    if not DISCORD_TOKEN:
+        raise RuntimeError("Missing DISCORD_TOKEN env var")
+    bot.run(DISCORD_TOKEN)
