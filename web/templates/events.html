@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Events</h2>
+    <div class="muted">Latest 100 events</div>
+  </div>
+
+  <div class="table">
+    <div class="row head">
+      <div>ID</div>
+      <div>Mode</div>
+      <div>Class</div>
+      <div>Title</div>
+      <div>Season</div>
+      <div>Start</div>
+    </div>
+
+    {% for e in rows %}
+    <div class="row">
+      <div class="mono">{{ e.id }}</div>
+      <div><span class="pill">{{ e.mode }}</span></div>
+      <div><span class="pill gold">{{ e.class_name }}</span></div>
+      <div>{{ e.title }}</div>
+      <div>{{ e.season }}</div>
+      <div class="mono">{{ e.start_time }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

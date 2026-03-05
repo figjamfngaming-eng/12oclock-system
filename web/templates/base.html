@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>12 O'Clock Boyz — AMA League</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="bg"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo" src="{{ url_for('static', filename='12oclock-logo.png') }}" alt="12 O'Clock Boyz">
+      <div>
+        <div class="title">12 O'Clock Boyz</div>
+        <div class="sub">AMA League (MX + SX)</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a class="btn" href="/">Home</a>
+      <a class="btn" href="/events">Events</a>
+      <a class="btn" href="/standings?mode=MX&class=450">Standings</a>
+      {% if invite_url %}
+      <a class="btn gold" href="{{ invite_url }}" target="_blank" rel="noreferrer">Join Discord</a>
+      {% endif %}
+    </nav>
+  </header>
+
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <div class="footer-card">
+      <div class="footer-left">
+        <div class="footer-title">Live League Stats</div>
+        <div class="footer-sub">Discord + League connected</div>
+      </div>
+      <div class="footer-right">
+        <div class="stat">
+          <div class="stat-num" id="discordMembers">--</div>
+          <div class="stat-label">Discord members</div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    async function loadStats(){
+      try{
+        const r = await fetch("/api/discord_stats");
+        const j = await r.json();
+        document.getElementById("discordMembers").textContent = j.discord_members ?? "--";
+      }catch(e){}
+    }
+    loadStats();
+    setInterval(loadStats, 60000);
+  </script>
+</body>
+</html>
