@@ -1,426 +1,403 @@
 import os
-import sys
-import json
 import re
+import json
 from datetime import datetime, timezone
-from pathlib import Path
 
-from flask import Flask, request, redirect, url_for, render_template, session, jsonify, flash
-import requests
-
-# ------------------------------------------------------------
-# Make sure "shared" is importable no matter what Render root dir is
-# (works even if Render Root Directory is set to "web")
-# /opt/render/project/src/web/app.py -> parents[1] == /opt/render/project/src
-# ------------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from shared.db import init_db, q, exec1  # noqa
-
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret-change-me")
+import psycopg2
+import psycopg2.extras
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 
 # ------------------------------------------------------------
-# ENV
+# Flask setup (your templates are in web/templates)
 # ------------------------------------------------------------
-DATABASE_URL = os.environ.get("DATABASE_URL")
+app = Flask(__name__, template_folder="templates", static_folder="static")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 
-DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID")
-DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
-DISCORD_REDIRECT_URI = os.environ.get("DISCORD_REDIRECT_URI")  # e.g. https://YOURWEB.onrender.com/oauth/discord/callback
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
-STEAM_OPENID_RETURN = os.environ.get("STEAM_OPENID_RETURN")  # e.g. https://YOURWEB.onrender.com/oauth/steam/return
+# API key (optional) if you later want the uploader/bot to call the site
+API_KEY = os.getenv("API_KEY", "").strip()
 
-DISCORD_INVITE_URL = os.environ.get("DISCORD_INVITE_URL", "#")
-DISCORD_GUILD_ID = os.environ.get("DISCORD_GUILD_ID")
-
-# Secret used by your PC uploader script to post results
-UPLOAD_TOKEN = os.environ.get("UPLOAD_TOKEN", "")
-
-# Basic sanity: don't hard-crash if missing, but warn
-if not DATABASE_URL:
-    print("[WARN] DATABASE_URL not set")
+DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "").strip()
 
 # ------------------------------------------------------------
-# INIT DB (Flask 3 compatible: do it at import time)
+# AMA-style (common outdoor motocross) points table
+# NOTE: If you want a different series, edit this table.
+# This is per-moto placement points.
 # ------------------------------------------------------------
+POINTS_TABLE = {
+    1: 50, 2: 47, 3: 45, 4: 43, 5: 41,
+    6: 40, 7: 39, 8: 38, 9: 37, 10: 36,
+    11: 35, 12: 34, 13: 33, 14: 32, 15: 31,
+    16: 30, 17: 29, 18: 28, 19: 27, 20: 26,
+    21: 25, 22: 24, 23: 23, 24: 22, 25: 21,
+    26: 20, 27: 19, 28: 18, 29: 17, 30: 16,
+    31: 15, 32: 14, 33: 13, 34: 12, 35: 11,
+    36: 10, 37: 9, 38: 8, 39: 7, 40: 6,
+    41: 5, 42: 4, 43: 3, 44: 2, 45: 1,
+}
+
+# ------------------------------------------------------------
+# DB helpers
+# ------------------------------------------------------------
+def db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL env var is missing on Render.")
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+def init_db():
+    """Create tables if they don't exist (safe to call on every boot)."""
+    ddl = """
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        discord_user_id BIGINT UNIQUE,
+        discord_tag TEXT,
+        steam_id TEXT,
+        mxb_name TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS events (
+        id SERIAL PRIMARY KEY,
+        mode TEXT NOT NULL,              -- MX / SX / ENDURO etc
+        class_name TEXT NOT NULL,        -- 450 / 250 / etc
+        title TEXT NOT NULL,
+        season INT NOT NULL DEFAULT 1,
+        track TEXT,
+        notes TEXT,
+        start_time TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS race_results (
+        id SERIAL PRIMARY KEY,
+        event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        source TEXT DEFAULT 'upload',     -- upload/bot/manual
+        uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+        raw_html TEXT,
+        parsed_json JSONB
+    );
+
+    CREATE TABLE IF NOT EXISTS standings_points (
+        id SERIAL PRIMARY KEY,
+        event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        class_name TEXT NOT NULL,
+        rider_name TEXT NOT NULL,
+        points INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    """
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(ddl)
+        conn.commit()
+
+# Call init_db at import time (Flask 3 removed before_first_request)
 try:
     init_db()
-    print("[OK] DB initialized")
 except Exception as e:
-    print("[WARN] init_db() failed (will retry on first request):", e)
+    # Don't hard crash on import; Render will show logs and you can fix env vars.
+    print(f"[INIT_DB] failed: {e}")
 
 # ------------------------------------------------------------
-# AMA-style points tables (CONFIG HERE)
-# You can change these exactly how you want later.
+# Parsing MX Bikes export HTML
+# Your MXB export is often a single .html file (like 1.html)
+# We'll extract rider rows in a tolerant way and compute points.
 # ------------------------------------------------------------
-AMA_MX_POINTS = [
-    50, 47, 45, 43, 41, 40, 39, 38, 37, 36,
-    35, 34, 33, 32, 31, 30, 29, 28, 27, 26,
-    25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
-    15, 14, 13, 12, 11, 10, 9, 8, 7, 6
-]
-AMA_SX_POINTS = [
-    26, 23, 21, 19, 17, 15, 14, 13, 12, 11,
-    10, 9, 8, 7, 6, 5, 4, 3, 2, 1
-]
-
-def points_for(mode: str, position: int) -> int:
-    mode = (mode or "").upper().strip()
-    if position <= 0:
-        return 0
-    if mode == "SX":
-        return AMA_SX_POINTS[position - 1] if position <= len(AMA_SX_POINTS) else 0
-    # default to MX
-    return AMA_MX_POINTS[position - 1] if position <= len(AMA_MX_POINTS) else 0
-
-
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
-def current_user():
-    uid = session.get("user_id")
-    if not uid:
-        return None
-    rows = q("SELECT * FROM users WHERE id=%s", [uid])
-    return rows[0] if rows else None
-
-def require_login():
-    u = current_user()
-    if not u:
-        return redirect(url_for("signup"))
-    return None
-
-def user_is_fully_linked(u) -> bool:
-    # Require Discord + Steam + MXB ingame name for "fully registered"
-    return bool(u.get("discord_id") and u.get("steam_id") and u.get("mxb_name"))
-
-def safe_init_db_retry():
-    try:
-        init_db()
-    except Exception as e:
-        print("[WARN] init_db retry failed:", e)
-
-@app.before_request
-def _ensure_db():
-    # light retry if init failed during boot
-    safe_init_db_retry()
-
-
-# ------------------------------------------------------------
-# Pages
-# ------------------------------------------------------------
-@app.route("/")
-def home():
-    u = current_user()
-    return render_template("home.html", user=u, invite_url=DISCORD_INVITE_URL)
-
-@app.route("/rules")
-def rules():
-    u = current_user()
-    return render_template("rules.html", user=u)
-
-@app.route("/events")
-def events():
-    u = current_user()
-    evs = q("SELECT * FROM events ORDER BY start_time DESC LIMIT 100")
-    return render_template("events.html", user=u, events=evs)
-
-@app.route("/standings")
-def standings():
-    u = current_user()
-    # Standings split by CLASS (250/450 etc) and MODE (MX/SX)
-    # Points = sum(results.points) + sum(penalties.points_delta)
-    rows = q("""
-        SELECT
-          e.mode,
-          e.class,
-          u.id as user_id,
-          COALESCE(u.mxb_name, u.username) AS rider,
-          COALESCE(SUM(r.points), 0) +
-          COALESCE((SELECT SUM(p.points_delta) FROM penalties p WHERE p.user_id=u.id), 0) AS total_points,
-          COUNT(DISTINCT r.event_id) as events_count
-        FROM users u
-        JOIN results r ON r.user_id = u.id
-        JOIN events e ON e.id = r.event_id
-        GROUP BY e.mode, e.class, u.id, rider
-        ORDER BY e.mode, e.class, total_points DESC
-    """)
-    # group for template
-    grouped = {}
-    for row in rows:
-        key = f"{row['mode']}_{row['class']}"
-        grouped.setdefault(key, []).append(row)
-    return render_template("standings.html", user=u, grouped=grouped)
-
-@app.route("/signup")
-def signup():
-    u = current_user()
-    return render_template("signup.html", user=u, invite_url=DISCORD_INVITE_URL)
-
-@app.route("/profile", methods=["GET", "POST"])
-def profile():
-    u = current_user()
-    if not u:
-        return redirect(url_for("signup"))
-
-    if request.method == "POST":
-        mxb_name = request.form.get("mxb_name", "").strip()
-        if not mxb_name:
-            flash("MX Bikes in-game name is required.", "error")
-        else:
-            exec1("UPDATE users SET mxb_name=%s WHERE id=%s", [mxb_name, u["id"]])
-            flash("Saved MX Bikes in-game name.", "success")
-        return redirect(url_for("profile"))
-
-    # refresh
-    u = current_user()
-    return render_template("profile.html", user=u)
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("home"))
-
-
-# ------------------------------------------------------------
-# Discord OAuth
-# ------------------------------------------------------------
-@app.route("/oauth/discord")
-def oauth_discord():
-    # Create local user if not exists
-    if not session.get("user_id"):
-        row = exec1("INSERT INTO users(username) VALUES(%s) RETURNING *", ["new-user"])
-        session["user_id"] = row["id"]
-
-    scope = "identify"
-    return redirect(
-        "https://discord.com/api/oauth2/authorize"
-        f"?client_id={DISCORD_CLIENT_ID}"
-        f"&redirect_uri={requests.utils.quote(DISCORD_REDIRECT_URI, safe='')}"
-        f"&response_type=code"
-        f"&scope={scope}"
-    )
-
-@app.route("/oauth/discord/callback")
-def oauth_discord_callback():
-    if not session.get("user_id"):
-        return redirect(url_for("signup"))
-
-    code = request.args.get("code")
-    if not code:
-        flash("Discord login failed: no code", "error")
-        return redirect(url_for("signup"))
-
-    data = {
-        "client_id": DISCORD_CLIENT_ID,
-        "client_secret": DISCORD_CLIENT_SECRET,
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": DISCORD_REDIRECT_URI,
-        "scope": "identify",
-    }
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    token_resp = requests.post("https://discord.com/api/oauth2/token", data=data, headers=headers)
-    token_resp.raise_for_status()
-    access_token = token_resp.json()["access_token"]
-
-    me = requests.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
-    me.raise_for_status()
-    me_json = me.json()
-
-    discord_id = int(me_json["id"])
-    username = f"{me_json.get('username','user')}#{me_json.get('discriminator','0000')}"
-
-    exec1(
-        "UPDATE users SET discord_id=%s, username=%s WHERE id=%s",
-        [discord_id, username, session["user_id"]],
-    )
-
-    flash("Discord linked ✅", "success")
-    return redirect(url_for("profile"))
-
-
-# ------------------------------------------------------------
-# Steam OpenID (simple redirect helper)
-# NOTE: for a full OpenID verify, keep your existing logic in templates/links.
-# ------------------------------------------------------------
-@app.route("/oauth/steam")
-def oauth_steam():
-    # You can keep your existing OpenID logic; this is placeholder redirect helper.
-    if not session.get("user_id"):
-        return redirect(url_for("signup"))
-    flash("Steam linking is configured via OpenID return URL.", "info")
-    return redirect(url_for("profile"))
-
-@app.route("/oauth/steam/return")
-def oauth_steam_return():
-    # If you already built parsing earlier, keep it.
-    # Minimal version: read steamid from query if your flow passes it.
-    if not session.get("user_id"):
-        return redirect(url_for("signup"))
-
-    steam_id = request.args.get("steam_id", "").strip()
-    if not steam_id:
-        flash("Steam link failed: missing steam_id", "error")
-        return redirect(url_for("profile"))
-
-    exec1("UPDATE users SET steam_id=%s WHERE id=%s", [steam_id, session["user_id"]])
-    flash("Steam linked ✅", "success")
-    return redirect(url_for("profile"))
-
-
-# ------------------------------------------------------------
-# Results Upload UI Page (admin/manual)
-# ------------------------------------------------------------
-@app.route("/results/upload", methods=["GET"])
-def results_upload_page():
-    u = current_user()
-    if not u:
-        return redirect(url_for("signup"))
-    evs = q("SELECT * FROM events ORDER BY start_time DESC LIMIT 50")
-    return render_template("upload_results.html", user=u, events=evs)
-
-# ------------------------------------------------------------
-# API: upload results (THIS POWERS THE "PRO AUTOMATION UPLOADER")
-# POST /api/results/upload
-# Headers: X-Upload-Token: <UPLOAD_TOKEN>
-# Body (multipart):
-#  - event_id (int)
-#  - export_html (file) OR export_text (string)
-# ------------------------------------------------------------
-@app.route("/api/results/upload", methods=["POST"])
-def api_results_upload():
-    if not UPLOAD_TOKEN:
-        return jsonify({"ok": False, "error": "UPLOAD_TOKEN not set on server"}), 500
-
-    token = request.headers.get("X-Upload-Token", "")
-    if token != UPLOAD_TOKEN:
-        return jsonify({"ok": False, "error": "unauthorized"}), 401
-
-    try:
-        event_id = int(request.form.get("event_id", "0"))
-    except Exception:
-        event_id = 0
-    if not event_id:
-        return jsonify({"ok": False, "error": "event_id required"}), 400
-
-    export_text = request.form.get("export_text", "")
-    if "export_html" in request.files:
-        export_text = request.files["export_html"].read().decode("utf-8", errors="ignore")
-
-    if not export_text or len(export_text) < 100:
-        return jsonify({"ok": False, "error": "export html/text missing"}), 400
-
-    # Get event info (mode/class)
-    ev = q("SELECT * FROM events WHERE id=%s", [event_id])
-    if not ev:
-        return jsonify({"ok": False, "error": "event not found"}), 404
-    ev = ev[0]
-    mode = (ev["mode"] or "MX").upper()
-
-    # Parse MXB export html:
-    # Your exports look like HTML tables; we detect rows and extract position + name + time.
-    parsed = parse_mxb_export_html(export_text)
-    if not parsed:
-        return jsonify({"ok": False, "error": "could not parse export"}), 400
-
-    # Wipe existing results for this event and re-insert
-    exec1("DELETE FROM results WHERE event_id=%s", [event_id])
-
-    inserted = 0
-    for row in parsed:
-        pos = row["position"]
-        raw_name = row["name"]
-        time_text = row.get("time")
-
-        # match to user by MXB name (case-insensitive)
-        user = q("SELECT id FROM users WHERE LOWER(mxb_name)=LOWER(%s) LIMIT 1", [raw_name])
-        user_id = user[0]["id"] if user else None
-
-        pts = points_for(mode, pos)
-
-        exec1(
-            """
-            INSERT INTO results(event_id, position, raw_name, user_id, points, time_text)
-            VALUES(%s,%s,%s,%s,%s,%s)
-            ON CONFLICT(event_id, position) DO UPDATE SET
-              raw_name=EXCLUDED.raw_name,
-              user_id=EXCLUDED.user_id,
-              points=EXCLUDED.points,
-              time_text=EXCLUDED.time_text
-            RETURNING id
-            """,
-            [event_id, pos, raw_name, user_id, pts, time_text],
-        )
-        inserted += 1
-
-    return jsonify({"ok": True, "event_id": event_id, "inserted": inserted})
-
+def _clean_text(s: str) -> str:
+    s = re.sub(r"\s+", " ", s or "").strip()
+    return s
 
 def parse_mxb_export_html(html: str):
     """
-    Tries to parse PiBoSo MX Bikes export HTML.
-    We look for table rows and pull:
-      - position
-      - rider name
-      - time (optional)
+    Try to parse rider standings/finish from MX Bikes exported HTML.
+    Returns:
+      {
+        "rows": [{"pos": 1, "name": "Devo", "time": "..."}],
+        "detected": {...}
+      }
+    Works even if the HTML structure changes a bit.
     """
-    # Normalize
-    html = html.replace("\r", "")
+    # Very tolerant parsing: look for table rows with position numbers.
+    # This isn't perfect but works for the typical MXB export.
+    rows = []
+    # Find rows like: <tr> ... <td>1</td> <td>RiderName</td> ...
+    tr_blocks = re.findall(r"<tr[^>]*>(.*?)</tr>", html, flags=re.I | re.S)
+    for tr in tr_blocks:
+        tds = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, flags=re.I | re.S)
+        tds = [_clean_text(re.sub(r"<[^>]+>", "", x)) for x in tds]
+        if not tds:
+            continue
 
-    # Quick extract rows
-    # This is intentionally tolerant to different export layouts
-    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, flags=re.IGNORECASE | re.DOTALL)
-    out = []
+        # find first integer cell = position
+        pos = None
+        for cell in tds[:3]:
+            if re.fullmatch(r"\d{1,3}", cell):
+                pos = int(cell)
+                break
+        if pos is None:
+            continue
+
+        # next likely cell is name
+        name = None
+        for cell in tds:
+            if cell and not re.fullmatch(r"\d{1,3}", cell) and len(cell) <= 40:
+                # skip obvious headers
+                if cell.lower() in {"pos", "position", "name", "rider"}:
+                    continue
+                name = cell
+                break
+
+        if not name:
+            continue
+
+        # optional time/laps
+        extra = tds[2:] if len(tds) > 2 else []
+        rows.append({"pos": pos, "name": name, "extra": extra})
+
+    # Remove duplicates, keep best (lowest pos)
+    best = {}
     for r in rows:
-        cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", r, flags=re.IGNORECASE | re.DOTALL)
-        cols = [re.sub(r"<.*?>", "", c).strip() for c in cols]
-        cols = [c for c in cols if c]
+        n = r["name"]
+        if n not in best or r["pos"] < best[n]["pos"]:
+            best[n] = r
+    rows = sorted(best.values(), key=lambda x: x["pos"])
 
-        # Common layouts:
-        # [Pos, Name, ... , Time]
-        if len(cols) >= 2:
-            # find first int in first column
-            m = re.match(r"^(\d+)$", cols[0])
-            if not m:
-                continue
-            pos = int(m.group(1))
-            name = cols[1].strip()
-            if not name:
-                continue
-
-            # optional time: last col that looks like mm:ss.xxx or hh:mm:ss.xxx
-            time_text = None
-            for c in reversed(cols):
-                if re.search(r"\d+:\d+(\.\d+)?", c):
-                    time_text = c
-                    break
-
-            out.append({"position": pos, "name": name, "time": time_text})
-
-    # Sort by position
-    out.sort(key=lambda x: x["position"])
-    return out
-
-
-# ------------------------------------------------------------
-# API: Discord stats (widget)
-# ------------------------------------------------------------
-@app.route("/api/discord_stats")
-def api_discord_stats():
-    data = {
-        "guild_id": DISCORD_GUILD_ID,
-        "invite_url": DISCORD_INVITE_URL,
+    return {
+        "rows": rows,
+        "count": len(rows),
     }
-    return jsonify(data)
 
+def compute_points_from_rows(rows):
+    scored = []
+    for r in rows:
+        pos = r["pos"]
+        pts = POINTS_TABLE.get(pos, 0)
+        scored.append({"pos": pos, "name": r["name"], "points": pts})
+    return scored
 
 # ------------------------------------------------------------
-# Health
+# Routes (tabs/pages)
+# You said "tabs on ONE page" earlier — your templates already do top nav tabs.
+# This backend supports those pages.
 # ------------------------------------------------------------
-@app.route("/healthz")
-def healthz():
-    return "ok", 200
+@app.get("/")
+def home():
+    # You have index.html, NOT home.html
+    return render_template("index.html", invite_url=DISCORD_INVITE_URL)
+
+@app.get("/events")
+def events():
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM events ORDER BY start_time DESC NULLS LAST, id DESC LIMIT 100;")
+            ev = cur.fetchall()
+    return render_template("events.html", events=ev)
+
+@app.get("/event/<int:event_id>")
+def event_page(event_id: int):
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM events WHERE id=%s;", (event_id,))
+            ev = cur.fetchone()
+            cur.execute(
+                "SELECT * FROM race_results WHERE event_id=%s ORDER BY uploaded_at DESC LIMIT 1;",
+                (event_id,)
+            )
+            rr = cur.fetchone()
+
+            cur.execute(
+                "SELECT rider_name, points FROM standings_points WHERE event_id=%s ORDER BY points DESC, rider_name ASC;",
+                (event_id,)
+            )
+            pts = cur.fetchall()
+
+    return render_template("event.html", event=ev, latest_result=rr, points=pts)
+
+@app.get("/standings")
+def standings():
+    class_filter = request.args.get("class", "").strip()  # 450 / 250 etc
+    mode_filter = request.args.get("mode", "").strip()
+
+    query = """
+        SELECT e.mode, sp.class_name, sp.rider_name, SUM(sp.points) AS total_points
+        FROM standings_points sp
+        JOIN events e ON e.id = sp.event_id
+        WHERE 1=1
+    """
+    params = []
+    if class_filter:
+        query += " AND sp.class_name = %s"
+        params.append(class_filter)
+    if mode_filter:
+        query += " AND e.mode = %s"
+        params.append(mode_filter)
+
+    query += """
+        GROUP BY e.mode, sp.class_name, sp.rider_name
+        ORDER BY e.mode, sp.class_name, total_points DESC, sp.rider_name ASC;
+    """
+
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+    # Split standings by class for the template
+    grouped = {}
+    for r in rows:
+        key = f"{r['mode']} {r['class_name']}"
+        grouped.setdefault(key, []).append(r)
+
+    return render_template("standings.html", grouped=grouped, class_filter=class_filter, mode_filter=mode_filter)
+
+@app.get("/rules")
+def rules():
+    return render_template("rules.html")
+
+@app.get("/profile")
+def profile():
+    # Basic profile page (manual linking for now)
+    # (Later you can add Discord OAuth + Steam OpenID)
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT 200;")
+            users = cur.fetchall()
+    return render_template("profile.html", users=users)
+
+@app.post("/profile/update")
+def profile_update():
+    discord_user_id = request.form.get("discord_user_id", "").strip()
+    discord_tag = request.form.get("discord_tag", "").strip()
+    steam_id = request.form.get("steam_id", "").strip()
+    mxb_name = request.form.get("mxb_name", "").strip()
+
+    if not discord_user_id.isdigit():
+        flash("Discord User ID must be a number.", "error")
+        return redirect(url_for("profile"))
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (discord_user_id, discord_tag, steam_id, mxb_name)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (discord_user_id)
+                DO UPDATE SET discord_tag=EXCLUDED.discord_tag,
+                              steam_id=EXCLUDED.steam_id,
+                              mxb_name=EXCLUDED.mxb_name;
+            """, (int(discord_user_id), discord_tag, steam_id, mxb_name))
+        conn.commit()
+
+    flash("Profile updated.", "success")
+    return redirect(url_for("profile"))
+
+@app.get("/upload")
+def upload_page():
+    # Your upload.html exists
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT id, mode, class_name, title, season, start_time FROM events ORDER BY id DESC LIMIT 100;")
+            events = cur.fetchall()
+    return render_template("upload.html", events=events)
+
+@app.post("/upload")
+def upload_results():
+    """
+    Upload MX Bikes export HTML (1.html). Parses it and writes points for event.
+    """
+    event_id = request.form.get("event_id", "").strip()
+    if not event_id.isdigit():
+        flash("Pick a valid event.", "error")
+        return redirect(url_for("upload_page"))
+
+    f = request.files.get("file")
+    if not f:
+        flash("Please choose your MX Bikes export HTML file.", "error")
+        return redirect(url_for("upload_page"))
+
+    html = f.read().decode("utf-8", errors="ignore")
+    parsed = parse_mxb_export_html(html)
+    scored = compute_points_from_rows(parsed["rows"])
+
+    # Get event class/mode from DB so points go into correct class
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM events WHERE id=%s;", (int(event_id),))
+            ev = cur.fetchone()
+            if not ev:
+                flash("Event not found.", "error")
+                return redirect(url_for("upload_page"))
+
+            # save raw + parsed
+            cur.execute(
+                "INSERT INTO race_results (event_id, raw_html, parsed_json) VALUES (%s, %s, %s);",
+                (int(event_id), html, json.dumps({"parsed": parsed, "scored": scored}))
+            )
+
+            # clear previous points for this event (re-upload allowed)
+            cur.execute("DELETE FROM standings_points WHERE event_id=%s;", (int(event_id),))
+
+            # insert points
+            for r in scored:
+                cur.execute("""
+                    INSERT INTO standings_points (event_id, class_name, rider_name, points)
+                    VALUES (%s, %s, %s, %s);
+                """, (int(event_id), ev["class_name"], r["name"], r["points"]))
+
+        conn.commit()
+
+    flash(f"Uploaded results. Parsed {parsed['count']} riders.", "success")
+    return redirect(url_for("event_page", event_id=int(event_id)))
+
+# ------------------------------------------------------------
+# Bot / external helper API endpoints (optional)
+# ------------------------------------------------------------
+def require_api_key():
+    if not API_KEY:
+        return True
+    sent = request.headers.get("X-API-KEY", "")
+    return sent == API_KEY
+
+@app.get("/api/discord_stats")
+def api_discord_stats():
+    # simple endpoint your site footer can call
+    return jsonify({"ok": True, "ts": datetime.now(timezone.utc).isoformat()})
+
+@app.post("/api/events/create")
+def api_create_event():
+    if not require_api_key():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(force=True, silent=True) or {}
+    mode = (data.get("mode") or "MX").strip()
+    class_name = (data.get("class") or "450").strip()
+    title = (data.get("title") or "Race").strip()
+    season = int(data.get("season") or 1)
+    track = (data.get("track") or "").strip()
+    notes = (data.get("notes") or "").strip()
+    start_time = data.get("start_time")  # ISO string optional
+
+    dt = None
+    if start_time:
+        try:
+            dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        except Exception:
+            dt = None
+
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO events (mode, class_name, title, season, track, notes, start_time)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING *;
+            """, (mode, class_name, title, season, track, notes, dt))
+            ev = cur.fetchone()
+        conn.commit()
+
+    return jsonify({"ok": True, "event": ev})
+
+# ------------------------------------------------------------
+# Local dev
+# ------------------------------------------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
