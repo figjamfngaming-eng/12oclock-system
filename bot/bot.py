@@ -1,190 +1,217 @@
 import os
 import sys
-from pathlib import Path
-
-# ✅ Make sibling folders importable (shared/) even when Render Root Directory = bot
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from datetime import datetime
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from shared.db import init_db, q, exec1
+# ---- make repo root importable so `shared` works even if Render Root Directory = bot
+BOT_DIR = os.path.dirname(os.path.abspath(__file__))           # .../bot
+REPO_ROOT = os.path.abspath(os.path.join(BOT_DIR, ".."))       # .../
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
+from shared.db import init_db, exec1, q  # noqa: E402
 
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
-GUILD_ID = os.getenv("GUILD_ID", "")  # optional: speeds up slash command updates
-ANNOUNCE_CHANNEL_ID = os.getenv("ANNOUNCE_CHANNEL_ID", "")
-RACE_DIRECTOR_ROLE_ID = os.getenv("ROLE_RACE_DIRECTOR_ID", "")
+# Accept BOTH env var names so you don’t get stuck
+TOKEN = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
+GUILD_ID = (os.getenv("DISCORD_GUILD_ID") or "").strip()
+ANNOUNCE_CH = (os.getenv("RACE_ANNOUNCEMENTS_CHANNEL_ID") or "").strip()
+RACE_DIRECTOR_ROLE_ID = (os.getenv("RACE_DIRECTOR_ROLE_ID") or "").strip()
+PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://one2oclock-system.onrender.com").rstrip("/")
+if not TOKEN:
+    raise RuntimeError("Missing DISCORD_BOT_TOKEN (or DISCORD_TOKEN)")
+if not ANNOUNCE_CH:
+    raise RuntimeError("Missing RACE_ANNOUNCEMENTS_CHANNEL_ID")
+if not RACE_DIRECTOR_ROLE_ID:
+    raise RuntimeError("Missing RACE_DIRECTOR_ROLE_ID")
 
+ANNOUNCE_CH = int(ANNOUNCE_CH)
+RACE_DIRECTOR_ROLE_ID = int(RACE_DIRECTOR_ROLE_ID)
 
 intents = discord.Intents.default()
+intents.guilds = True  # slash commands
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+_synced_once = False
 
-def is_race_director(member: discord.Member) -> bool:
-    if not RACE_DIRECTOR_ROLE_ID:
+def is_race_director(interaction: discord.Interaction) -> bool:
+    if not interaction.user or not isinstance(interaction.user, discord.Member):
         return False
-    return any(str(r.id) == str(RACE_DIRECTOR_ROLE_ID) for r in member.roles)
+    return any(r.id == RACE_DIRECTOR_ROLE_ID for r in interaction.user.roles)
 
+def require_director():
+    async def predicate(interaction: discord.Interaction):
+        if is_race_director(interaction):
+            return True
+        raise app_commands.CheckFailure("Race Director only.")
+    return app_commands.check(predicate)
 
 @bot.event
 async def on_ready():
-    print(f"[BOT] Logged in as {bot.user}")
+    global _synced_once
 
-    # ✅ init DB safely
-    try:
-        init_db()
-    except Exception as e:
-        print("[WARN] init_db failed:", e)
+    init_db()
+    print(f"Logged in as {bot.user} (guild-sync={'YES' if GUILD_ID else 'NO'})")
 
-    # ✅ Slash command sync
+    # Don’t spam sync every reconnect (helps avoid rate limits)
+    if _synced_once:
+        return
+
     try:
-        if GUILD_ID and str(GUILD_ID).isdigit():
+        if GUILD_ID:
             guild = discord.Object(id=int(GUILD_ID))
             bot.tree.copy_global_to(guild=guild)
             await bot.tree.sync(guild=guild)
-            print("[BOT] Synced commands to guild", GUILD_ID)
+            print("✅ Synced commands to guild (instant).")
         else:
             await bot.tree.sync()
-            print("[BOT] Synced global commands")
+            print("✅ Synced commands globally (can take time to appear).")
+
+        _synced_once = True
     except Exception as e:
-        print("[BOT] Sync error:", e)
+        print("❌ Sync error:", e)
 
+# ---------------- Slash Commands ----------------
 
-# ----------------------------
-# /create_event (Race Director)
-# ----------------------------
-@bot.tree.command(name="create_event", description="Create a new race event (Race Director only).")
+@bot.tree.command(name="ping", description="Check if the AMA League bot is online.")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("✅ Pong! AMA League bot online.", ephemeral=True)
+
+@bot.tree.command(name="sync", description="Force sync slash commands (Race Director).")
+@require_director()
+async def sync(interaction: discord.Interaction):
+    try:
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+        else:
+            await bot.tree.sync()
+        await interaction.response.send_message("✅ Commands synced.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Sync failed: {e}", ephemeral=True)
+
+@bot.tree.command(name="create_event", description="Create an event and announce it.")
+@require_director()
 @app_commands.describe(
-    title="Event title (e.g. Round 1)",
-    mode="MX or SX",
-    bike_class="450 / 250 / 2T",
-    season="Season number",
-    start_ts="Start time (ISO) e.g. 2026-03-10 20:00",
+    mode="MX / SX / ENDURO",
+    race_class="450 / 250 / 250-2t etc",
+    title="Event title",
     track="Track name",
-    notes="Notes",
+    season="Season number",
+    start="Start time (YYYY-MM-DD HH:MM) local time",
+    notes="Extra notes"
 )
 async def create_event(
     interaction: discord.Interaction,
-    title: str,
     mode: str,
-    bike_class: str,
-    season: int,
-    start_ts: str,
+    race_class: str,
+    title: str,
     track: str,
+    season: int = 1,
+    start: str = "",
     notes: str = "",
 ):
-    if not interaction.user or not isinstance(interaction.user, discord.Member):
-        return await interaction.response.send_message("Run this inside the server.", ephemeral=True)
+    if start:
+        try:
+            start_dt = datetime.strptime(start.strip(), "%Y-%m-%d %H:%M")
+        except ValueError:
+            return await interaction.response.send_message(
+                "❌ Bad start format. Use `YYYY-MM-DD HH:MM` (example `2026-03-10 20:00`)",
+                ephemeral=True,
+            )
+    else:
+        start_dt = datetime.utcnow()
 
-    if not is_race_director(interaction.user):
-        return await interaction.response.send_message("Race Director only.", ephemeral=True)
-
-    await interaction.response.defer(ephemeral=True)
-
-    # store event
     row = exec1(
-        "INSERT INTO events (mode, class, title, season, start_ts, track, notes) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-        (mode.upper(), bike_class, title, season, start_ts, track, notes),
+        """
+        INSERT INTO events (season, mode, class, title, track, start_time, notes, created_by_discord_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+        RETURNING *
+        """,
+        [season, mode.upper().strip(), race_class.strip(), title.strip(), track.strip(), start_dt, notes.strip(), str(interaction.user.id)],
     )
+
     event_id = row["id"]
 
-    # announce
-    msg = (
-        f"🏁 **{mode.upper()} {bike_class} — {title}**\n"
-        f"Season: **{season}**\n"
-        f"Start: **{start_ts}**\n"
-        f"Track: **{track}**\n"
-        f"Notes: {notes or '-'}\n\n"
-        f"Event ID: **{event_id}**\n"
-        f"Upload results: {WEBSITE_URL}/upload\n"
-        f"Event page: {WEBSITE_URL}/events/{event_id}\n"
+    ch = bot.get_channel(ANNOUNCE_CH) or await bot.fetch_channel(ANNOUNCE_CH)
+
+    embed = discord.Embed(
+        title=f"🏁 {row['mode']} {row['class']} — {row['title']}",
+        description=(row.get("notes") or " "),
     )
+    embed.add_field(name="Season", value=str(row["season"]), inline=True)
+    embed.add_field(name="Start", value=str(row["start_time"]), inline=True)
+    embed.add_field(name="Track", value=row["track"], inline=True)
+    embed.set_footer(text=f"Event ID: {event_id}")
 
-    if ANNOUNCE_CHANNEL_ID and str(ANNOUNCE_CHANNEL_ID).isdigit():
-        ch = bot.get_channel(int(ANNOUNCE_CHANNEL_ID))
-        if ch:
-            await ch.send(msg)
+    view = discord.ui.View()
+    if PUBLIC_BASE_URL:
+        view.add_item(discord.ui.Button(label="View Events", url=f"{PUBLIC_BASE_URL}/events"))
 
-    await interaction.followup.send(f"✅ Event created (ID {event_id}).", ephemeral=True)
+    await ch.send(embed=embed, view=view)
+    await interaction.response.send_message(f"✅ Event created. Event ID: {event_id}", ephemeral=True)
 
+@bot.tree.command(name="standings", description="Show standings (split by class).")
+async def standings(interaction: discord.Interaction):
+    rows = q("""
+        SELECT
+          u.discord_name,
+          u.mxb_name,
+          COALESCE(u.race_class,'UNASSIGNED') AS race_class,
+          COALESCE(SUM(r.points),0) + COALESCE(SUM(p.points_delta),0) AS points
+        FROM users u
+        LEFT JOIN results r ON r.user_id=u.id
+        LEFT JOIN penalties p ON p.user_id=u.id
+        GROUP BY u.discord_name, u.mxb_name, u.race_class
+        ORDER BY race_class ASC, points DESC
+        LIMIT 100
+    """)
 
-# ----------------------------
-# /standings (this fixes your “standing” issue)
-# ----------------------------
-@bot.tree.command(name="standings", description="Show standings link (and top 10) for a class.")
-@app_commands.describe(bike_class="450 / 250 / 2T")
-async def standings(interaction: discord.Interaction, bike_class: str):
-    await interaction.response.defer(ephemeral=False)
+    if not rows:
+        return await interaction.response.send_message("No standings yet.", ephemeral=True)
 
-    # Pull top 10 from DB (bot reads same DB as web)
-    rows = q(
-        "SELECT u.mxb_name, u.discord_name, COALESCE(SUM(r.points),0) AS points "
-        "FROM users u "
-        "JOIN results r ON r.user_id=u.id "
-        "JOIN events e ON e.id=r.event_id "
-        "WHERE e.class=%s "
-        "GROUP BY u.mxb_name, u.discord_name "
-        "ORDER BY points DESC, u.mxb_name ASC "
-        "LIMIT 10",
-        (bike_class,),
-    )
+    # Build message grouped by class
+    grouped = {}
+    for r in rows:
+        grouped.setdefault(r["race_class"], []).append(r)
 
     lines = []
-    for i, r in enumerate(rows, start=1):
-        name = r["mxb_name"] or r["discord_name"] or "Unknown"
-        lines.append(f"**{i}.** {name} — **{int(r['points'])}** pts")
+    for cls, items in grouped.items():
+        lines.append(f"**{cls}**")
+        for i, it in enumerate(items[:10], start=1):
+            name = it.get("mxb_name") or it.get("discord_name") or "Rider"
+            lines.append(f"{i}. {name} — **{int(it['points'])}** pts")
+        lines.append("")
 
-    text = (
-        f"🏆 **Standings ({bike_class})**\n"
-        f"{WEBSITE_URL}/standings?class={bike_class}\n\n"
-        + ("\n".join(lines) if lines else "_No points yet for this class._")
+    msg = "\n".join(lines).strip()
+    await interaction.response.send_message(msg[:1900], ephemeral=True)
+
+@bot.tree.command(name="penalty", description="Apply a points penalty/bonus to a rider.")
+@require_director()
+@app_commands.describe(discord_user="Discord user", points_delta="Negative to deduct points", reason="Reason")
+async def penalty(interaction: discord.Interaction, discord_user: discord.Member, points_delta: int, reason: str):
+    u = q("SELECT * FROM users WHERE discord_id=%s", [str(discord_user.id)])
+    if not u:
+        return await interaction.response.send_message("❌ Rider not signed up on website yet.", ephemeral=True)
+    u = u[0]
+
+    last = q("SELECT id FROM events ORDER BY start_time DESC LIMIT 1")
+    event_id = int(last[0]["id"]) if last else None
+
+    exec1(
+        """
+        INSERT INTO penalties (event_id, user_id, points_delta, reason, issued_by_discord_id)
+        VALUES (%s,%s,%s,%s,%s)
+        """,
+        [event_id, u["id"], int(points_delta), str(reason), str(interaction.user.id)],
+    )
+    await interaction.response.send_message(
+        f"✅ Applied {points_delta} pts to {discord_user.display_name} — {reason}",
+        ephemeral=True,
     )
 
-    await interaction.followup.send(text)
-
-
-# ----------------------------
-# /penalty (Race Director)
-# ----------------------------
-@bot.tree.command(name="penalty", description="Apply a points penalty to a rider (Race Director only).")
-@app_commands.describe(event_id="Event ID", mxb_name="Rider MXB name", points="Negative number e.g. -5", reason="Reason")
-async def penalty(interaction: discord.Interaction, event_id: int, mxb_name: str, points: int, reason: str = ""):
-    if not interaction.user or not isinstance(interaction.user, discord.Member):
-        return await interaction.response.send_message("Run this inside the server.", ephemeral=True)
-
-    if not is_race_director(interaction.user):
-        return await interaction.response.send_message("Race Director only.", ephemeral=True)
-
-    await interaction.response.defer(ephemeral=True)
-
-    user = q("SELECT id FROM users WHERE LOWER(mxb_name)=LOWER(%s) LIMIT 1", (mxb_name.strip(),))
-    if not user:
-        return await interaction.followup.send("❌ Rider not found (MXB name must match profile).", ephemeral=True)
-
-    uid = user[0]["id"]
-
-    # upsert penalty row (store as result row with negative points if no result exists)
-    existing = q("SELECT id, points FROM results WHERE event_id=%s AND user_id=%s", (event_id, uid))
-    if existing:
-        new_points = int(existing[0]["points"]) + int(points)
-        exec1("UPDATE results SET points=%s WHERE id=%s", (new_points, existing[0]["id"]))
-    else:
-        exec1(
-            "INSERT INTO results (event_id, user_id, position, points, raw_json) VALUES (%s,%s,%s,%s,%s)",
-            (event_id, uid, 999, int(points), f"penalty:{reason}"),
-        )
-
-    await interaction.followup.send(f"✅ Penalty applied to **{mxb_name}** ({points} pts). {reason}", ephemeral=True)
-
-
-if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        raise RuntimeError("Missing DISCORD_TOKEN env var")
-    bot.run(DISCORD_TOKEN)
+bot.run(TOKEN)
