@@ -39,9 +39,9 @@ def db_exec(sql: str, params=None, fetch: str = "none"):
 
 def init_db():
     # TEMP RESET TO FIX BROKEN OLD TABLES
-    db_exec("DROP TABLE IF EXISTS race_results;")
-    db_exec("DROP TABLE IF EXISTS events;")
-    db_exec("DROP TABLE IF EXISTS users;")
+    db_exec("DROP TABLE IF EXISTS race_results CASCADE;")
+    db_exec("DROP TABLE IF EXISTS events CASCADE;")
+    db_exec("DROP TABLE IF EXISTS users CASCADE;")
 
     db_exec(
         """
