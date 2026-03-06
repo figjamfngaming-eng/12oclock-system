@@ -6,9 +6,20 @@
 
 ```
 <h1>12 O'Clock Boyz MX League</h1>
+
 <p class="subtitle">
     Official AMA Style MX Bikes Championship
 </p>
+
+{% if oauth_ready %}
+<a class="button primary" href="/auth/discord/login">
+    Login With Discord
+</a>
+{% else %}
+<a class="button primary" href="{{ invite_url }}">
+    Join Discord
+</a>
+{% endif %}
 ```
 
 </div>
@@ -17,66 +28,187 @@
 
 ```
 <div class="card">
+
     <h2>Championship Standings</h2>
-    <p>Select your class to view rider standings.</p>
+
+    <p>Select your class to view the full standings.</p>
 
     <div class="pill-container">
-        <a class="pill" href="/standings?class=450">450</a>
-        <a class="pill" href="/standings?class=250">250</a>
-        <a class="pill" href="/standings?class=open">Open</a>
+
+        <a class="pill" href="{{ url_for('standings_page') }}?class=450">
+            450
+        </a>
+
+        <a class="pill" href="{{ url_for('standings_page') }}?class=250">
+            250
+        </a>
+
     </div>
+
 </div>
 
 
 <div class="card">
+
     <h2>Upcoming Events</h2>
-    <p>View race schedule and event information.</p>
+
+    {% if recent_events %}
+
+    <ul class="event-list">
+
+        {% for e in recent_events %}
+
+        <li>
+
+            <strong>{{ e.name }}</strong>
+
+            <div class="event-meta">
+
+                Track: {{ e.track }} |
+                Class: {{ e.class_name }} |
+                Round {{ e.round_number }}
+
+            </div>
+
+            <a class="small-link" href="/event/{{ e.id }}">
+                View Event
+            </a>
+
+        </li>
+
+        {% endfor %}
+
+    </ul>
+
+    {% else %}
+
+    <p>No events scheduled yet.</p>
+
+    {% endif %}
 
     <a class="button" href="/events">
-        View Events
+        View All Events
     </a>
+
 </div>
 
 
 <div class="card">
-    <h2>Riders</h2>
-    <p>See all registered riders in the championship.</p>
 
-    <a class="button" href="/riders">
-        Rider List
+    <h2>Top 450 Standings</h2>
+
+    {% if standings_450 %}
+
+    <ol class="standings-list">
+
+        {% for rider in standings_450 %}
+
+        <li>
+
+            {{ rider.rider_name }}
+            <span class="points">{{ rider.total_points }} pts</span>
+
+        </li>
+
+        {% endfor %}
+
+    </ol>
+
+    {% else %}
+
+    <p>No results yet.</p>
+
+    {% endif %}
+
+    <a class="small-link" href="{{ url_for('standings_page') }}?class=450">
+        Full Standings
     </a>
+
 </div>
 
 
 <div class="card">
-    <h2>Upload Race Results</h2>
-    <p>Upload MX Bikes export files after a race.</p>
 
-    <a class="button" href="/upload">
-        Upload Results
+    <h2>Top 250 Standings</h2>
+
+    {% if standings_250 %}
+
+    <ol class="standings-list">
+
+        {% for rider in standings_250 %}
+
+        <li>
+
+            {{ rider.rider_name }}
+            <span class="points">{{ rider.total_points }} pts</span>
+
+        </li>
+
+        {% endfor %}
+
+    </ol>
+
+    {% else %}
+
+    <p>No results yet.</p>
+
+    {% endif %}
+
+    <a class="small-link" href="{{ url_for('standings_page') }}?class=250">
+        Full Standings
     </a>
+
 </div>
 
 
 <div class="card">
-    <h2>League Rules</h2>
-    <p>View official 12 O'Clock Boyz championship rules.</p>
 
-    <a class="button" href="/rules">
-        View Rules
-    </a>
+    <h2>League Pages</h2>
+
+    <ul class="link-list">
+
+        <li><a href="/riders">Rider List</a></li>
+
+        <li><a href="/schedule">Race Schedule</a></li>
+
+        <li><a href="/rules">League Rules</a></li>
+
+        <li><a href="/upload">Upload Results</a></li>
+
+    </ul>
+
 </div>
 
 
 <div class="card">
-    <h2>Race Schedule</h2>
-    <p>See the full season calendar.</p>
 
-    <a class="button" href="/schedule">
-        View Schedule
-    </a>
+    <h2>League Stats</h2>
+
+    <div id="leagueStats">
+
+        Loading stats...
+
+    </div>
+
 </div>
 ```
 
 </div>
+
+<script>
+
+fetch("/api/stats")
+.then(res => res.json())
+.then(data => {
+
+    document.getElementById("leagueStats").innerHTML = `
+        Riders: ${data.users}<br>
+        Events: ${data.events}<br>
+        Results: ${data.results}<br>
+        Season: ${data.season}
+    `
+
+})
+
+</script>
 {% endblock %}
