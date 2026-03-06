@@ -1,214 +1,122 @@
 {% extends "base.html" %}
 
 {% block content %}
-
-<div class="hero">
-
-```
-<h1>12 O'Clock Boyz MX League</h1>
-
-<p class="subtitle">
-    Official AMA Style MX Bikes Championship
-</p>
-
-{% if oauth_ready %}
-<a class="button primary" href="/auth/discord/login">
-    Login With Discord
-</a>
-{% else %}
-<a class="button primary" href="{{ invite_url }}">
-    Join Discord
-</a>
-{% endif %}
-```
-
-</div>
-
-<div class="home-grid">
-
-```
 <div class="card">
+    <h1 class="title">MX Bikes League System</h1>
+    <p class="sub">
+        Sign in with Discord, register your MX Bikes rider name, follow the race schedule,
+        upload results, and track championship standings.
+    </p>
 
-    <h2>Championship Standings</h2>
-
-    <p>Select your class to view the full standings.</p>
-
-    <div class="pill-container">
-
-        <a class="pill" href="{{ url_for('standings_page') }}?class=450">
-            450
-        </a>
-
-        <a class="pill" href="{{ url_for('standings_page') }}?class=250">
-            250
-        </a>
-
+    <div class="links" style="margin-bottom:18px;">
+        {% if user %}
+            <a class="btn primary" href="{{ url_for('profile') }}">Open Profile</a>
+            <a class="btn secondary" href="{{ url_for('upload_page') }}">Upload Result</a>
+        {% else %}
+            {% if oauth_ready %}
+                <a class="btn primary" href="{{ url_for('discord_login') }}">Sign In with Discord</a>
+            {% endif %}
+            <a class="btn secondary" href="{{ invite_url }}" target="_blank">Join Discord</a>
+        {% endif %}
     </div>
 
+    <div class="grid three">
+        <div class="stat">
+            <div class="k">Season</div>
+            <div class="v">{{ default_season }}</div>
+        </div>
+        <div class="stat">
+            <div class="k">Registered Riders</div>
+            <div class="v">{{ rider_count }}</div>
+        </div>
+        <div class="stat">
+            <div class="k">Status</div>
+            <div class="v" style="font-size:20px;">Discord + Website Connected</div>
+        </div>
+    </div>
 </div>
 
-
-<div class="card">
-
-    <h2>Upcoming Events</h2>
-
-    {% if recent_events %}
-
-    <ul class="event-list">
-
-        {% for e in recent_events %}
-
-        <li>
-
-            <strong>{{ e.name }}</strong>
-
-            <div class="event-meta">
-
-                Track: {{ e.track }} |
-                Class: {{ e.class_name }} |
-                Round {{ e.round_number }}
-
+<div class="section grid two">
+    <div class="card">
+        <h2>Latest Events</h2>
+        {% if recent_events %}
+            <div class="list">
+                {% for e in recent_events %}
+                    <a class="list-item" href="{{ url_for('event_page', event_id=e.id) }}">
+                        <strong>{{ e.name }}</strong><br>
+                        <span class="muted">{{ e.track }} · {{ e.class_name }} · {{ e.season }} Round {{ e.round_number }}</span><br>
+                        <span class="tag {% if e.status == 'open' %}good{% else %}warn{% endif %}">{{ e.status }}</span>
+                    </a>
+                {% endfor %}
             </div>
-
-            <a class="small-link" href="/event/{{ e.id }}">
-                View Event
-            </a>
-
-        </li>
-
-        {% endfor %}
-
-    </ul>
-
-    {% else %}
-
-    <p>No events scheduled yet.</p>
-
-    {% endif %}
-
-    <a class="button" href="/events">
-        View All Events
-    </a>
-
-</div>
-
-
-<div class="card">
-
-    <h2>Top 450 Standings</h2>
-
-    {% if standings_450 %}
-
-    <ol class="standings-list">
-
-        {% for rider in standings_450 %}
-
-        <li>
-
-            {{ rider.rider_name }}
-            <span class="points">{{ rider.total_points }} pts</span>
-
-        </li>
-
-        {% endfor %}
-
-    </ol>
-
-    {% else %}
-
-    <p>No results yet.</p>
-
-    {% endif %}
-
-    <a class="small-link" href="{{ url_for('standings_page') }}?class=450">
-        Full Standings
-    </a>
-
-</div>
-
-
-<div class="card">
-
-    <h2>Top 250 Standings</h2>
-
-    {% if standings_250 %}
-
-    <ol class="standings-list">
-
-        {% for rider in standings_250 %}
-
-        <li>
-
-            {{ rider.rider_name }}
-            <span class="points">{{ rider.total_points }} pts</span>
-
-        </li>
-
-        {% endfor %}
-
-    </ol>
-
-    {% else %}
-
-    <p>No results yet.</p>
-
-    {% endif %}
-
-    <a class="small-link" href="{{ url_for('standings_page') }}?class=250">
-        Full Standings
-    </a>
-
-</div>
-
-
-<div class="card">
-
-    <h2>League Pages</h2>
-
-    <ul class="link-list">
-
-        <li><a href="/riders">Rider List</a></li>
-
-        <li><a href="/schedule">Race Schedule</a></li>
-
-        <li><a href="/rules">League Rules</a></li>
-
-        <li><a href="/upload">Upload Results</a></li>
-
-    </ul>
-
-</div>
-
-
-<div class="card">
-
-    <h2>League Stats</h2>
-
-    <div id="leagueStats">
-
-        Loading stats...
-
+        {% else %}
+            <p class="muted">No events created yet.</p>
+        {% endif %}
     </div>
 
+    <div class="card">
+        <h2>How It Works</h2>
+        <div class="list">
+            <div class="list-item">1. Sign in with Discord</div>
+            <div class="list-item">2. Set your MX Bikes rider name</div>
+            <div class="list-item">3. Join the correct event and class</div>
+            <div class="list-item">4. Results get uploaded and points are tracked</div>
+            <div class="list-item">5. Check standings on the website or Discord</div>
+        </div>
+    </div>
 </div>
-```
 
+<div class="section grid two">
+    <div class="card">
+        <h2>450 Standings</h2>
+        {% if standings_450 %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Rider</th>
+                        <th>Points</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in standings_450 %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ r.rider_name }}</td>
+                        <td>{{ r.total_points }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="muted">No 450 standings yet.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>250 Standings</h2>
+        {% if standings_250 %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Rider</th>
+                        <th>Points</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in standings_250 %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ r.rider_name }}</td>
+                        <td>{{ r.total_points }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="muted">No 250 standings yet.</p>
+        {% endif %}
+    </div>
 </div>
-
-<script>
-
-fetch("/api/stats")
-.then(res => res.json())
-.then(data => {
-
-    document.getElementById("leagueStats").innerHTML = `
-        Riders: ${data.users}<br>
-        Events: ${data.events}<br>
-        Results: ${data.results}<br>
-        Season: ${data.season}
-    `
-
-})
-
-</script>
 {% endblock %}
