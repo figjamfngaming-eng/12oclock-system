@@ -11,12 +11,15 @@
     <div class="links" style="margin-bottom:18px;">
         {% if user %}
             <a class="btn primary" href="{{ url_for('profile') }}">Open Profile</a>
-            <a class="btn secondary" href="{{ url_for('upload_page') }}">Upload Result</a>
+            <a class="btn" href="{{ url_for('upload_page') }}">Upload Result</a>
+            {% if is_admin_user %}
+                <a class="btn" href="{{ url_for('admin_panel') }}">Admin Panel</a>
+            {% endif %}
         {% else %}
             {% if oauth_ready %}
                 <a class="btn primary" href="{{ url_for('discord_login') }}">Sign In with Discord</a>
             {% endif %}
-            <a class="btn secondary" href="{{ invite_url }}" target="_blank">Join Discord</a>
+            <a class="btn" href="{{ invite_url }}" target="_blank">Join Discord</a>
         {% endif %}
     </div>
 
@@ -31,7 +34,7 @@
         </div>
         <div class="stat">
             <div class="k">Status</div>
-            <div class="v" style="font-size:20px;">Discord + Website Connected</div>
+            <div class="v" style="font-size:20px;">League System Live</div>
         </div>
     </div>
 </div>
@@ -45,7 +48,7 @@
                     <a class="list-item" href="{{ url_for('event_page', event_id=e.id) }}">
                         <strong>{{ e.name }}</strong><br>
                         <span class="muted">{{ e.track }} · {{ e.class_name }} · {{ e.season }} Round {{ e.round_number }}</span><br>
-                        <span class="tag {% if e.status == 'open' %}good{% else %}warn{% endif %}">{{ e.status }}</span>
+                        <span class="tag">{{ e.status }}</span>
                     </a>
                 {% endfor %}
             </div>
@@ -59,9 +62,9 @@
         <div class="list">
             <div class="list-item">1. Sign in with Discord</div>
             <div class="list-item">2. Set your MX Bikes rider name</div>
-            <div class="list-item">3. Join the correct event and class</div>
-            <div class="list-item">4. Results get uploaded and points are tracked</div>
-            <div class="list-item">5. Check standings on the website or Discord</div>
+            <div class="list-item">3. Race your event and class</div>
+            <div class="list-item">4. Upload or enter race results</div>
+            <div class="list-item">5. Standings update automatically</div>
         </div>
     </div>
 </div>
