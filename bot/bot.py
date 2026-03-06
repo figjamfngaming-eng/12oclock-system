@@ -13,16 +13,15 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-DATABASE
 def get_db():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
 @bot.event
 async def on_ready():
-    print("====================================")
+    print("===================================")
     print(f"BOT ONLINE: {bot.user}")
-    print("====================================")
+    print("===================================")
 
 
 @bot.command()
@@ -31,43 +30,20 @@ async def ping(ctx):
 
 
 @bot.command()
-async def create_event(ctx, name: str, track: str, class_name: str):
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        INSERT INTO events (name, track, class_name)
-        VALUES (%s, %s, %s)
-        """,
-        (name, track, class_name)
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    await ctx.send(f"✅ Event created: {name}")
-
-
-@bot.command()
-async def standings(ctx, class_name: str = "450"):
+async def standings(ctx, class_name="450"):
 
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute(
-        """
+    cur.execute("""
         SELECT rider_name,
-        SUM(points - penalty_points) as total_points
+        SUM(points - penalty_points) as total
         FROM race_results
         WHERE class_name=%s
         GROUP BY rider_name
-        ORDER BY total_points DESC
+        ORDER BY total DESC
         LIMIT 10
-        """,
-        (class_name,)
-    )
+    """, (class_name,))
 
     rows = cur.fetchall()
 
@@ -84,6 +60,5 @@ async def standings(ctx, class_name: str = "450"):
         msg += f"{i}. {r[0]} — {r[1]} pts\n"
 
     await ctx.send(msg)
-
 
 bot.run(TOKEN)
