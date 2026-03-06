@@ -1,56 +1,82 @@
 {% extends "base.html" %}
+
 {% block content %}
-<section class="card hero">
-  <h1>MX Bikes League System</h1>
-  <p class="muted">Signup on the website, link Discord + Steam, set your MX Bikes in‑game name, race events, import results, and track AMA points.</p>
 
-  <div class="row">
-    {% if user %}
-      <a class="btn" href="{{ url_for('profile') }}">Go to Profile</a>
-      <a class="btn ghost" href="{{ url_for('events') }}">View Events</a>
-      <a class="btn ghost" href="{{ url_for('upload_page') }}">Upload Results</a>
-    {% else %}
-      <a class="btn" href="{{ url_for('discord_login') }}">Sign in with Discord</a>
-    {% endif %}
-    {% if invite_url %}
-      <a class="btn ghost" href="{{ invite_url }}" target="_blank" rel="noreferrer">Join Discord</a>
-    {% endif %}
-  </div>
+<div class="hero">
 
-  <div class="stats">
-    <div class="stat">
-      <div class="k">Registered Racers</div>
-      <div class="v" id="stat-racers">—</div>
+```
+<h1>12 O'Clock Boyz MX League</h1>
+<p class="subtitle">
+    Official AMA Style MX Bikes Championship
+</p>
+```
+
+</div>
+
+<div class="home-grid">
+
+```
+<div class="card">
+    <h2>Championship Standings</h2>
+    <p>Select your class to view rider standings.</p>
+
+    <div class="pill-container">
+        <a class="pill" href="/standings?class=450">450</a>
+        <a class="pill" href="/standings?class=250">250</a>
+        <a class="pill" href="/standings?class=open">Open</a>
     </div>
-    <div class="stat">
-      <div class="k">Discord Members</div>
-      <div class="v" id="stat-discord">—</div>
-      <div class="s" id="stat-discord-name"></div>
-    </div>
-  </div>
-</section>
+</div>
 
-<section class="grid2">
-  <div class="card">
-    <h2>How it works</h2>
-    <ol class="muted">
-      <li>Sign in with Discord</li>
-      <li>Set your MX Bikes in‑game name</li>
-      <li>Link Steam (optional)</li>
-      <li>Race Director creates events</li>
-      <li>Upload MX Bikes export HTML after races</li>
-      <li>Standings update instantly by class</li>
-    </ol>
-  </div>
 
-  <div class="card">
-    <h2>Classes</h2>
-    <div class="row">
-      <a class="pill" href="{{ url_for('standings', cls='450') }}">450</a>
-      <a class="pill" href="{{ url_for('standings', cls='250') }}">250</a>
-      <a class="pill" href="{{ url_for('standings', cls='250-2t') }}">250 2T</a>
-    </div>
-    <p class="muted">You can add more classes anytime — they are stored on events.</p>
-  </div>
-</section>
+<div class="card">
+    <h2>Upcoming Events</h2>
+    <p>View race schedule and event information.</p>
+
+    <a class="button" href="/events">
+        View Events
+    </a>
+</div>
+
+
+<div class="card">
+    <h2>Riders</h2>
+    <p>See all registered riders in the championship.</p>
+
+    <a class="button" href="/riders">
+        Rider List
+    </a>
+</div>
+
+
+<div class="card">
+    <h2>Upload Race Results</h2>
+    <p>Upload MX Bikes export files after a race.</p>
+
+    <a class="button" href="/upload">
+        Upload Results
+    </a>
+</div>
+
+
+<div class="card">
+    <h2>League Rules</h2>
+    <p>View official 12 O'Clock Boyz championship rules.</p>
+
+    <a class="button" href="/rules">
+        View Rules
+    </a>
+</div>
+
+
+<div class="card">
+    <h2>Race Schedule</h2>
+    <p>See the full season calendar.</p>
+
+    <a class="button" href="/schedule">
+        View Schedule
+    </a>
+</div>
+```
+
+</div>
 {% endblock %}
