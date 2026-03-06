@@ -1,46 +1,64 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{% block title %}12 O'Clock Boyz{% endblock %}</title>
-
-  <style>
-    body{font-family:system-ui,Arial;margin:0;background:#0b1020;color:#e9ecff}
-    .nav{display:flex;gap:14px;align-items:center;padding:14px 18px;background:#121a33;border-bottom:1px solid rgba(255,255,255,.08)}
-    .nav a{color:#e9ecff;text-decoration:none;opacity:.9}
-    .nav a:hover{opacity:1}
-    .wrap{max-width:1100px;margin:0 auto;padding:18px}
-    .btn{display:inline-block;padding:10px 14px;border-radius:10px;background:#6d5efc;color:#fff;text-decoration:none}
-    .btn.secondary{background:#1b2446}
-    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.08)}
-    .card{background:#121a33;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px}
-  </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>12 O'Clock Boyz — MX Bikes AMA League</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-  <div class="nav">
-    <a href="{{ url_for('index') }}"><b>12 O'Clock Boyz</b></a>
-    <a href="{{ url_for('standings_page') }}">Standings</a>
-    <a class="pill" href="{{ invite_url }}" target="_blank" rel="noreferrer">Join Discord</a>
+    <header class="site-header">
+        <div class="container nav-wrap">
+            <a href="{{ url_for('index') }}" class="brand">
+                <img src="{{ url_for('static', filename='12oclock-logo.png') }}" alt="12 O'Clock Boyz Logo" class="brand-logo">
+                <div class="brand-text">
+                    <span class="brand-title">12 O'Clock Boyz</span>
+                    <span class="brand-subtitle">MX Bikes AMA League</span>
+                </div>
+            </a>
 
-    <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
-      {% if user %}
-        <span class="pill">Signed in: {{ user.discord_name }}</span>
-        <a class="btn secondary" href="{{ url_for('logout') }}">Logout</a>
-      {% else %}
-        {% if oauth_ready %}
-          <a class="btn" href="{{ url_for('discord_login') }}">Sign in with Discord</a>
-        {% else %}
-          <span class="pill">Discord OAuth env vars missing</span>
-        {% endif %}
-      {% endif %}
-    </div>
-  </div>
+            <nav class="site-nav">
+                <a href="{{ url_for('index') }}">Home</a>
+                <a href="{{ url_for('events_page') }}">Events</a>
+                <a href="{{ url_for('standings_page') }}?class=450">Standings</a>
+                <a href="{{ url_for('riders_page') }}">Riders</a>
+                <a href="{{ url_for('schedule_page') }}">Schedule</a>
+                <a href="{{ url_for('rules_page') }}">Rules</a>
+                <a href="{{ url_for('upload_page') }}">Upload</a>
 
-  <div class="wrap">
-    {% block content %}{% endblock %}
-  </div>
+                {% if user %}
+                    <a href="{{ url_for('profile') }}" class="nav-btn secondary">Profile</a>
+                    <a href="{{ url_for('logout') }}" class="nav-btn secondary">Logout</a>
+                {% else %}
+                    {% if oauth_ready %}
+                        <a href="{{ url_for('discord_login') }}" class="nav-btn primary">Sign in with Discord</a>
+                    {% else %}
+                        <a href="{{ invite_url }}" target="_blank" class="nav-btn primary">Join Discord</a>
+                    {% endif %}
+                {% endif %}
+            </nav>
+        </div>
+    </header>
+
+    <main class="site-main">
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <div class="container footer-inner">
+            <div>
+                <strong>12 O'Clock Boyz</strong> — MX Bikes AMA League
+            </div>
+            <div class="footer-links">
+                <a href="{{ url_for('events_page') }}">Events</a>
+                <a href="{{ url_for('standings_page') }}?class=450">Standings</a>
+                <a href="{{ url_for('rules_page') }}">Rules</a>
+            </div>
+        </div>
+    </footer>
 
 </body>
 </html>
