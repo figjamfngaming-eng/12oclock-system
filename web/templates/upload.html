@@ -1,22 +1,55 @@
 {% extends "base.html" %}
+
 {% block content %}
-<section class="card">
-  <h1>Upload MX Bikes Export</h1>
-  <p class="muted">Pick an event, then upload the export <b>.html</b> from Documents\PiBoSo\MX Bikes\exports</p>
+<div class="card" style="max-width:820px;">
+    <h1 class="title">Upload Result</h1>
+    <p class="sub">Submit a race result linked to your Discord account.</p>
 
-  <form method="post" enctype="multipart/form-data" class="form">
-    <label>Event</label>
-    <select class="input" name="event_id" required>
-      <option value="">Select event…</option>
-      {% for e in events %}
-        <option value="{{ e.id }}">#{{ e.id }} — {{ e.mode }} {{ e.class }} — {{ e.title }} ({{ e.start_time }})</option>
-      {% endfor %}
-    </select>
+    {% if message %}
+        <div class="flash">{{ message }}</div>
+    {% endif %}
 
-    <label>Export HTML file</label>
-    <input class="input" type="file" name="file" accept=".html,.htm" required/>
+    {% if not user %}
+        <p class="muted">You need to sign in with Discord first.</p>
+        {% if oauth_ready %}
+            <a class="btn primary" href="{{ url_for('discord_login') }}">Sign In with Discord</a>
+        {% endif %}
+    {% else %}
+        <form method="post">
+            <div>
+                <label>Event</label>
+                <select name="event_id" required>
+                    <option value="">Select event</option>
+                    {% for e in events %}
+                        <option value="{{ e.id }}">
+                            ID {{ e.id }} — {{ e.name }} — {{ e.class_name }} — {{ e.season }} R{{ e.round_number }} — {{ e.status }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
 
-    <button class="btn" type="submit">Import Results</button>
-  </form>
-</section>
+            <div>
+                <label>Rider Name</label>
+                <input type="text" name="rider_name" value="{{ user.mxb_name or '' }}" required>
+            </div>
+
+            <div>
+                <label>Position</label>
+                <input type="number" name="position" min="1" required>
+            </div>
+
+            <div>
+                <label>Points</label>
+                <input type="number" name="points" min="0" required>
+            </div>
+
+            <div>
+                <label>Notes</label>
+                <textarea name="notes" placeholder="Optional notes"></textarea>
+            </div>
+
+            <button class="btn primary" type="submit">Submit Result</button>
+        </form>
+    {% endif %}
+</div>
 {% endblock %}
