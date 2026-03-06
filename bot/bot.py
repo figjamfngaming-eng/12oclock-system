@@ -1,4 +1,8 @@
+import sys
 import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(file), "..")))
+
 import asyncio
 import discord
 from discord import app_commands
