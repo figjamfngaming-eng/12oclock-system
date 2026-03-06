@@ -1,37 +1,14 @@
 {% extends "base.html" %}
+
 {% block content %}
-<section class="card">
-  <h1>League Rules</h1>
-  <p class="muted">These are the default rules. Edit this file any time: <code>web/templates/rules.html</code></p>
+<div class="card">
+    <h1 class="title">League Rules</h1>
+    <p class="sub">Official race rules for the 12 O'Clock Boyz MX Bikes league.</p>
 
-  <h2>1) Identity & Signup</h2>
-  <ul class="muted">
-    <li>All racers must sign in on the website with Discord and set their MX Bikes in‑game name.</li>
-    <li>Steam linking is recommended for verification.</li>
-    <li>Your in‑game name must match exactly, or results will not link to your profile.</li>
-  </ul>
-
-  <h2>2) Race Conduct</h2>
-  <ul class="muted">
-    <li>No intentional ramming, blocking, or track cutting.</li>
-    <li>Rejoin safely. Unsafe rejoins can be penalized.</li>
-    <li>Respect blue flags and faster riders.</li>
-  </ul>
-
-  <h2>3) Results & Proof</h2>
-  <ul class="muted">
-    <li>Race Director posts events in #race-announcements.</li>
-    <li>After races, results are imported from MX Bikes export HTML.</li>
-    <li>Clip review can be required for disputes (use your clip-review channel).</li>
-  </ul>
-
-  <h2>4) Points (AMA Style)</h2>
-  <p class="muted">Points are awarded per moto/race using AMA-style table (1st→22nd). Penalties can subtract points.</p>
-
-  <h2>5) Penalties</h2>
-  <ul class="muted">
-    <li>Warnings, point deductions, disqualifications, and bans can be applied depending on severity.</li>
-    <li>Repeated rule breaks = escalating penalties.</li>
-  </ul>
-</section>
+    <div class="list">
+        {% for rule in rules %}
+            <div class="list-item">{{ loop.index }}. {{ rule }}</div>
+        {% endfor %}
+    </div>
+</div>
 {% endblock %}
