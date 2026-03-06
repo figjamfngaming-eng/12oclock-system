@@ -3,88 +3,44 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{% block title %}12 O'Clock Boyz — MX Bikes League{% endblock %}</title>
-
-  <!-- If you have these files, keep them -->
-  <link rel="stylesheet" href="/static/style.css" />
-  <script defer src="/static/main.js"></script>
+  <title>{% block title %}12 O'Clock Boyz{% endblock %}</title>
 
   <style>
-    /* Safe fallback styling if your CSS doesn't load */
-    :root { color-scheme: dark; }
-    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#0b0f1a; color:#e8ecff; }
-    .topbar { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; background:#0f1730; border-bottom:1px solid rgba(255,255,255,.08); position:sticky; top:0; z-index:50; }
-    .brand { display:flex; gap:12px; align-items:center; }
-    .brand .logo { width:34px; height:34px; border-radius:10px; background:linear-gradient(135deg,#7c5cff,#2dd4ff); }
-    .brand .title { font-weight:800; letter-spacing:.2px; }
-    .nav { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    .nav a { color:#cfe0ff; text-decoration:none; padding:8px 10px; border-radius:10px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); font-weight:600; font-size:14px; }
-    .nav a:hover { background:rgba(255,255,255,.10); }
-    .nav a.active { outline:2px solid rgba(124,92,255,.6); }
-    .wrap { max-width:1100px; margin:20px auto; padding:0 16px; }
-    .flash { margin:14px 0; padding:12px 14px; border-radius:12px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); }
-    .cta { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    .btn { display:inline-flex; gap:8px; align-items:center; justify-content:center; padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,.10); background:rgba(124,92,255,.22); color:#fff; text-decoration:none; font-weight:800; }
-    .btn.secondary { background:rgba(255,255,255,.06); font-weight:700; }
-    footer { opacity:.75; padding:30px 0; font-size:13px; }
-    .right { display:flex; gap:10px; align-items:center; }
-    .pill { padding:7px 10px; border-radius:999px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); font-size:13px; }
+    body{font-family:system-ui,Arial;margin:0;background:#0b1020;color:#e9ecff}
+    .nav{display:flex;gap:14px;align-items:center;padding:14px 18px;background:#121a33;border-bottom:1px solid rgba(255,255,255,.08)}
+    .nav a{color:#e9ecff;text-decoration:none;opacity:.9}
+    .nav a:hover{opacity:1}
+    .wrap{max-width:1100px;margin:0 auto;padding:18px}
+    .btn{display:inline-block;padding:10px 14px;border-radius:10px;background:#6d5efc;color:#fff;text-decoration:none}
+    .btn.secondary{background:#1b2446}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.08)}
+    .card{background:#121a33;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px}
   </style>
 </head>
-
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo"></div>
-      <div>
-        <div class="title">12 O'Clock Boyz</div>
-        <div style="opacity:.8; font-size:12px;">AMA League (MX + SX)</div>
-      </div>
-    </div>
 
-    <!-- IMPORTANT:
-         We use direct paths instead of url_for() so the site won't crash if endpoint names differ.
-         Change these paths only if you changed your Flask routes. -->
-    <nav class="nav" aria-label="Main">
-      <a href="/" class="{% if request.path == '/' %}active{% endif %}">Home</a>
-      <a href="/events" class="{% if request.path.startswith('/events') %}active{% endif %}">Events</a>
-      <a href="/standings" class="{% if request.path.startswith('/standings') %}active{% endif %}">Standings</a>
-      <a href="/riders" class="{% if request.path.startswith('/riders') %}active{% endif %}">Riders</a>
-      <a href="/schedule" class="{% if request.path.startswith('/schedule') %}active{% endif %}">Schedule</a>
-      <a href="/rules" class="{% if request.path.startswith('/rules') %}active{% endif %}">Rules</a>
-      <a href="/upload" class="{% if request.path.startswith('/upload') %}active{% endif %}">Upload</a>
-      <a href="/profile" class="{% if request.path.startswith('/profile') %}active{% endif %}">Profile</a>
-    </nav>
+  <div class="nav">
+    <a href="{{ url_for('index') }}"><b>12 O'Clock Boyz</b></a>
+    <a href="{{ url_for('standings_page') }}">Standings</a>
+    <a class="pill" href="{{ invite_url }}" target="_blank" rel="noreferrer">Join Discord</a>
 
-    <div class="right">
-      {% if session and session.get('discord_user') %}
-        <div class="pill">Signed in: {{ session.get('discord_user', {}).get('username', 'User') }}</div>
-        <a class="btn secondary" href="/auth/logout">Logout</a>
+    <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
+      {% if user %}
+        <span class="pill">Signed in: {{ user.discord_name }}</span>
+        <a class="btn secondary" href="{{ url_for('logout') }}">Logout</a>
       {% else %}
-        <div class="cta">
-          <!-- This path matches your logs: /auth/discord/login -->
-          <a class="btn" href="/auth/discord/login">Sign in with Discord</a>
-          {% if invite_url %}
-            <a class="btn secondary" href="{{ invite_url }}" target="_blank" rel="noreferrer">Join Discord</a>
-          {% endif %}
-        </div>
+        {% if oauth_ready %}
+          <a class="btn" href="{{ url_for('discord_login') }}">Sign in with Discord</a>
+        {% else %}
+          <span class="pill">Discord OAuth env vars missing</span>
+        {% endif %}
       {% endif %}
     </div>
-  </header>
+  </div>
 
-  <main class="wrap">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for category, message in messages %}
-          <div class="flash">{{ message }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
+  <div class="wrap">
     {% block content %}{% endblock %}
-    <footer>
-      <div>© {{ (now().year if now is defined else "") }} 12 O'Clock Boyz — MX Bikes League System</div>
-    </footer>
-  </main>
+  </div>
+
 </body>
 </html>
