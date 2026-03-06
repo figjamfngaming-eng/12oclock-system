@@ -1,193 +1,77 @@
 import os
-import time
+import secrets
+import requests
 from urllib.parse import urlencode
 
-import psycopg2
-import psycopg2.extras
-import requests
-from flask import Flask, redirect, request, session, url_for, render_template, jsonify, abort
+from flask import Flask, redirect, request, session, url_for, render_template, jsonify
 
-# ----------------------------
-# Config / Env
-# ----------------------------
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-SECRET_KEY = os.getenv("SECRET_KEY", os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me"))
+from shared.db import init_db, exec_sql, q
 
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
-DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
-DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")  # must match portal
-DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", os.getenv("DISCORD_INVITE", ""))
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")  # must exactly match Discord Developer Portal
+DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "https://discord.gg/")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "")
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+# A strong secret is required for sessions
+SECRET_KEY = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 
-# ----------------------------
-# App
-# ----------------------------
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = SECRET_KEY
 
-# ----------------------------
-# DB helpers
-# ----------------------------
-def db_conn():
-    if not DATABASE_URL:
-        raise RuntimeError("Missing DATABASE_URL env var")
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+_db_ready = False
 
-def db_exec(sql, params=None, fetch="none"):
-    """
-    fetch: 'none' | 'one' | 'all'
-    """
-    with db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, params or {})
-            if fetch == "one":
-                return cur.fetchone()
-            if fetch == "all":
-                return cur.fetchall()
-            return None
 
-def ensure_schema():
-    """
-    Creates tables if missing and patches common missing columns.
-    This avoids: psycopg2.errors.UndefinedColumn: column "user_id" does not exist
-    """
-    # create base tables
-    db_exec(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            discord_id TEXT UNIQUE,
-            discord_name TEXT,
-            steam_id TEXT,
-            mxb_name TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """
-    )
+def ensure_db():
+    global _db_ready
+    if not _db_ready:
+        init_db()
+        _db_ready = True
 
-    db_exec(
-        """
-        CREATE TABLE IF NOT EXISTS events (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            track TEXT,
-            bike_class TEXT,
-            start_time TIMESTAMP,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """
-    )
 
-    db_exec(
-        """
-        CREATE TABLE IF NOT EXISTS results (
-            id SERIAL PRIMARY KEY,
-            event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
-            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            discord_id TEXT,
-            rider_name TEXT,
-            position INTEGER,
-            points INTEGER,
-            raw_html TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """
-    )
+def oauth_ready():
+    return all([DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI])
 
-    # patch missing columns safely (Postgres 9.6+ supports IF NOT EXISTS on ADD COLUMN)
-    db_exec("""ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_id TEXT;""")
-    db_exec("""ALTER TABLE users ADD COLUMN IF NOT EXISTS mxb_name TEXT;""")
-    db_exec("""ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_name TEXT;""")
-    db_exec("""ALTER TABLE results ADD COLUMN IF NOT EXISTS raw_html TEXT;""")
-    db_exec("""ALTER TABLE results ADD COLUMN IF NOT EXISTS points INTEGER;""")
-    db_exec("""ALTER TABLE results ADD COLUMN IF NOT EXISTS discord_id TEXT;""")
-    db_exec("""ALTER TABLE results ADD COLUMN IF NOT EXISTS rider_name TEXT;""")
-    db_exec("""ALTER TABLE results ADD COLUMN IF NOT EXISTS user_id INTEGER;""")
 
-# Run schema once on first request (Flask 3 removed before_first_request)
-_schema_done = False
 @app.before_request
-def _ensure_db_once():
-    global _schema_done
-    if not _schema_done:
-        ensure_schema()
-        _schema_done = True
+def _before_any_request():
+    # Ensure DB tables exist for every request without using removed Flask hooks.
+    if DATABASE_URL:
+        try:
+            ensure_db()
+        except Exception:
+            # Don't kill the whole site if DB is temporarily down
+            pass
 
-# ----------------------------
-# Routes
-# ----------------------------
+
+@app.get("/health")
+def health():
+    return jsonify({"ok": True})
+
+
 @app.get("/")
-def home():
-    # Show homepage even if OAuth env vars are missing
-    oauth_ok = bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI)
-
-    # registered racers count
-    try:
-        row = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")
-        racers = row["c"] if row else 0
-    except Exception:
-        racers = 0
-
+def index():
+    user = session.get("user")
     return render_template(
         "index.html",
+        user=user,
         invite_url=DISCORD_INVITE_URL,
-        oauth_ok=oauth_ok,
-        racers=racers,
-        me=session.get("me"),
+        oauth_ready=oauth_ready(),
     )
 
-@app.get("/profile")
-def profile():
-    if not session.get("me"):
-        return redirect(url_for("home"))
-    # load user from db
-    me = session["me"]
-    u = db_exec("SELECT * FROM users WHERE discord_id=%(d)s;", {"d": me["id"]}, fetch="one")
-    return render_template("profile.html", me=me, user=u, invite_url=DISCORD_INVITE_URL)
-
-@app.post("/profile")
-def profile_save():
-    if not session.get("me"):
-        return redirect(url_for("home"))
-    me = session["me"]
-    steam_id = request.form.get("steam_id", "").strip()
-    mxb_name = request.form.get("mxb_name", "").strip()
-
-    # upsert user
-    db_exec(
-        """
-        INSERT INTO users (discord_id, discord_name, steam_id, mxb_name)
-        VALUES (%(discord_id)s, %(discord_name)s, %(steam_id)s, %(mxb_name)s)
-        ON CONFLICT (discord_id)
-        DO UPDATE SET discord_name=EXCLUDED.discord_name,
-                      steam_id=EXCLUDED.steam_id,
-                      mxb_name=EXCLUDED.mxb_name;
-        """,
-        {
-            "discord_id": me["id"],
-            "discord_name": me.get("username"),
-            "steam_id": steam_id,
-            "mxb_name": mxb_name,
-        },
-    )
-    return redirect(url_for("profile"))
 
 @app.get("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("home"))
+    return redirect(url_for("index"))
 
-# ----------------------------
-# Discord OAuth
-# ----------------------------
+
 @app.get("/auth/discord/login")
 def discord_login():
-    if not (DISCORD_CLIENT_ID and DISCORD_REDIRECT_URI):
-        abort(500, "Discord OAuth env vars missing (DISCORD_CLIENT_ID / DISCORD_REDIRECT_URI).")
+    if not oauth_ready():
+        return redirect(url_for("index"))
 
+    # Discord OAuth2 Authorization
     params = {
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": DISCORD_REDIRECT_URI,
@@ -197,174 +81,104 @@ def discord_login():
     }
     return redirect("https://discord.com/api/oauth2/authorize?" + urlencode(params))
 
+
 @app.get("/auth/discord/callback")
 def discord_callback():
-    if not (DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI):
-        abort(500, "Discord OAuth env vars missing (CLIENT_ID/SECRET/REDIRECT_URI).")
+    if not oauth_ready():
+        return redirect(url_for("index"))
 
     code = request.args.get("code")
     if not code:
-        return redirect(url_for("home"))
+        return redirect(url_for("index"))
 
-    # exchange code
+    # Exchange code for token
+    token_data = {
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "scope": "identify",
+    }
+
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
     token_resp = requests.post(
         "https://discord.com/api/oauth2/token",
-        data={
-            "client_id": DISCORD_CLIENT_ID,
-            "client_secret": DISCORD_CLIENT_SECRET,
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": DISCORD_REDIRECT_URI,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=15,
+        data=token_data,
+        headers=headers,
+        timeout=20,
     )
     token_resp.raise_for_status()
-    token = token_resp.json()["access_token"]
+    token_json = token_resp.json()
+    access_token = token_json["access_token"]
 
-    # get user
-    me_resp = requests.get(
+    # Get Discord user
+    user_resp = requests.get(
         "https://discord.com/api/users/@me",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=15,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
     )
-    me_resp.raise_for_status()
-    me = me_resp.json()
+    user_resp.raise_for_status()
+    u = user_resp.json()
 
-    session["me"] = {"id": str(me["id"]), "username": me.get("username", "")}
+    discord_id = u.get("id")
+    discord_name = f"{u.get('username', '')}#{u.get('discriminator', '0000')}".strip("#0000") if u.get("discriminator") else u.get("username")
 
-    # ensure user exists
-    db_exec(
-        """
-        INSERT INTO users (discord_id, discord_name)
-        VALUES (%(discord_id)s, %(discord_name)s)
-        ON CONFLICT (discord_id)
-        DO UPDATE SET discord_name=EXCLUDED.discord_name;
-        """,
-        {"discord_id": str(me["id"]), "discord_name": me.get("username", "")},
-    )
+    # Save session
+    session["user"] = {"discord_id": discord_id, "discord_name": discord_name}
 
-    return redirect(url_for("profile"))
+    # Save to DB
+    if DATABASE_URL:
+        ensure_db()
+        exec_sql(
+            """
+            INSERT INTO users (discord_id, discord_name)
+            VALUES (%s, %s)
+            ON CONFLICT (discord_id)
+            DO UPDATE SET discord_name = EXCLUDED.discord_name
+            """,
+            (discord_id, discord_name),
+        )
 
-# ----------------------------
-# League pages
-# ----------------------------
-@app.get("/schedule")
-def schedule():
-    events = db_exec(
-        "SELECT * FROM events ORDER BY start_time NULLS LAST, id DESC;",
-        fetch="all"
-    ) or []
-    return render_template("schedule.html", events=events, invite_url=DISCORD_INVITE_URL)
+    return redirect(url_for("index"))
 
-@app.get("/standings")
-def standings():
-    rows = db_exec(
-        """
-        SELECT
-          COALESCE(u.mxb_name, u.discord_name, r.rider_name, r.discord_id) AS rider,
-          SUM(COALESCE(r.points, 0))::int AS points,
-          COUNT(*)::int AS motos
-        FROM results r
-        LEFT JOIN users u ON u.id = r.user_id OR u.discord_id = r.discord_id
-        GROUP BY rider
-        ORDER BY points DESC, motos DESC, rider ASC;
-        """,
-        fetch="all"
-    ) or []
-    return render_template("standings.html", rows=rows, invite_url=DISCORD_INVITE_URL)
 
-@app.get("/riders")
-def riders():
-    users = db_exec("SELECT * FROM users ORDER BY created_at DESC LIMIT 500;", fetch="all") or []
-    return render_template("riders.html", users=users, invite_url=DISCORD_INVITE_URL)
-
-@app.get("/rules")
-def rules():
-    return render_template("rules.html", invite_url=DISCORD_INVITE_URL)
-
-@app.get("/upload")
-def upload_page():
-    # optional: require login
-    return render_template("upload.html", invite_url=DISCORD_INVITE_URL)
-
-@app.post("/upload")
-def upload_results():
-    """
-    Accepts either:
-    - a file input named 'file'
-    - or a text area named 'raw_html'
-    """
-    raw_html = ""
-    if "file" in request.files and request.files["file"].filename:
-        raw_html = request.files["file"].read().decode("utf-8", errors="ignore")
-    else:
-        raw_html = request.form.get("raw_html", "")
-
-    raw_html = (raw_html or "").strip()
-    if not raw_html:
-        return "No HTML provided", 400
-
-    # attach to active event if any
-    ev = db_exec("SELECT * FROM events WHERE is_active=TRUE ORDER BY id DESC LIMIT 1;", fetch="one")
-    event_id = ev["id"] if ev else None
-
-    # store raw html
-    me = session.get("me")
-    discord_id = me["id"] if me else None
-
-    db_exec(
-        """
-        INSERT INTO results (event_id, discord_id, rider_name, position, points, raw_html)
-        VALUES (%(event_id)s, %(discord_id)s, %(rider_name)s, NULL, NULL, %(raw_html)s);
-        """,
-        {
-            "event_id": event_id,
-            "discord_id": discord_id,
-            "rider_name": me.get("username") if me else None,
-            "raw_html": raw_html,
-        },
-    )
-
-    return redirect(url_for("standings"))
-
-# ----------------------------
-# API
-# ----------------------------
 @app.get("/api/discord_stats")
 def api_discord_stats():
-    # Basic health stats; optional guild member count if token + guild provided
-    stats = {"ok": True, "guild_id": DISCORD_GUILD_ID or None}
+    # Simple stat example: number of registered users
+    if not DATABASE_URL:
+        return jsonify({"registered_racers": 0})
+
+    ensure_db()
+    rows = q("SELECT COUNT(*)::int AS c FROM users")
+    return jsonify({"registered_racers": rows[0]["c"]})
+
+
+@app.get("/standings")
+def standings_page():
+    # Show standings page using race_results table
+    if not DATABASE_URL:
+        return render_template("standings.html", rows=[], season="S1", round=1, class_name="450")
+
+    ensure_db()
+    season = request.args.get("season", "S1")
+    round_str = request.args.get("round", "1")
+    class_name = request.args.get("class", "450")
 
     try:
-        row = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")
-        stats["registered_racers"] = row["c"] if row else 0
-    except Exception:
-        stats["registered_racers"] = 0
+        rnd = int(round_str)
+    except ValueError:
+        rnd = 1
 
-    if DISCORD_BOT_TOKEN and DISCORD_GUILD_ID:
-        try:
-            r = requests.get(
-                f"https://discord.com/api/guilds/{DISCORD_GUILD_ID}?with_counts=true",
-                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                timeout=15,
-            )
-            if r.status_code == 200:
-                data = r.json()
-                stats["approx_members"] = data.get("approximate_member_count")
-        except Exception:
-            pass
-
-    return jsonify(stats)
-
-# alias your frontend was calling
-@app.get("/api/stats")
-def api_stats_alias():
-    return api_discord_stats()
-
-# ----------------------------
-# Main
-# ----------------------------
-if __name__ == "__main__":
-    # local dev only
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    rows = q(
+        """
+        SELECT rider_name, discord_id, SUM(points)::int AS points
+        FROM race_results
+        WHERE season = %s AND round = %s AND class_name = %s
+        GROUP BY rider_name, discord_id
+        ORDER BY points DESC, rider_name ASC
+        """,
+        (season, rnd, class_name),
+    )
+    return render_template("standings.html", rows=rows, season=season, round=rnd, class_name=class_name)
