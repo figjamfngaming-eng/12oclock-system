@@ -1,11 +1,8 @@
 import os
-from datetime import datetime
-from typing import Optional
-
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 import psycopg2
 import psycopg2.extras
 import requests
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-secret-key-now")
@@ -18,9 +15,6 @@ DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "https://discord.gg/")
 DEFAULT_SEASON = os.getenv("DEFAULT_SEASON", "S1")
 
 
-# =========================
-# DB
-# =========================
 def db_conn():
     if not DATABASE_URL:
         raise RuntimeError("Missing DATABASE_URL env var")
@@ -44,6 +38,11 @@ def db_exec(sql: str, params=None, fetch: str = "none"):
 
 
 def init_db():
+    # TEMP RESET TO FIX BROKEN OLD TABLES
+    db_exec("DROP TABLE IF EXISTS race_results;")
+    db_exec("DROP TABLE IF EXISTS events;")
+    db_exec("DROP TABLE IF EXISTS users;")
+
     db_exec(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -93,34 +92,6 @@ def init_db():
         """
     )
 
-    # Safe migrations
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_name TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS mxb_name TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_id TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS track TEXT;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS class_name TEXT;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS start_time TIMESTAMP NULL;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_discord_id TEXT;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS event_id INTEGER;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS class_name TEXT DEFAULT '450';")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS discord_id TEXT;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS rider_name TEXT;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS position INTEGER;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS penalty_points INTEGER DEFAULT 0;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS notes TEXT;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-
     db_exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);")
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_event ON race_results(event_id);")
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_class ON race_results(class_name);")
@@ -133,9 +104,6 @@ def ensure_db():
         init_db()
 
 
-# =========================
-# HELPERS
-# =========================
 def current_user():
     return session.get("user")
 
@@ -154,61 +122,52 @@ def inject_globals():
     }
 
 
-# =========================
-# PAGES
-# =========================
 @app.route("/")
 def index():
-    recent_events = []
-    standings_450 = []
-    standings_250 = []
-    rider_count = 0
+    recent_events = db_exec(
+        """
+        SELECT id, name, track, class_name, season, round_number, start_time, status
+        FROM events
+        ORDER BY id DESC
+        LIMIT 6;
+        """,
+        fetch="all",
+    )
 
-    if DATABASE_URL:
-        recent_events = db_exec(
-            """
-            SELECT id, name, track, class_name, season, round_number, start_time, status
-            FROM events
-            ORDER BY id DESC
-            LIMIT 6;
-            """,
-            fetch="all",
-        )
+    standings_450 = db_exec(
+        """
+        SELECT
+            rider_name,
+            SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+        FROM race_results
+        WHERE class_name = '450'
+          AND season = %s
+        GROUP BY rider_name
+        ORDER BY total_points DESC, rider_name ASC
+        LIMIT 5;
+        """,
+        (DEFAULT_SEASON,),
+        fetch="all",
+    )
 
-        standings_450 = db_exec(
-            """
-            SELECT
-                rider_name,
-                SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
-            FROM race_results
-            WHERE class_name = '450'
-              AND season = %s
-            GROUP BY rider_name
-            ORDER BY total_points DESC, rider_name ASC
-            LIMIT 5;
-            """,
-            (DEFAULT_SEASON,),
-            fetch="all",
-        )
+    standings_250 = db_exec(
+        """
+        SELECT
+            rider_name,
+            SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+        FROM race_results
+        WHERE class_name = '250'
+          AND season = %s
+        GROUP BY rider_name
+        ORDER BY total_points DESC, rider_name ASC
+        LIMIT 5;
+        """,
+        (DEFAULT_SEASON,),
+        fetch="all",
+    )
 
-        standings_250 = db_exec(
-            """
-            SELECT
-                rider_name,
-                SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
-            FROM race_results
-            WHERE class_name = '250'
-              AND season = %s
-            GROUP BY rider_name
-            ORDER BY total_points DESC, rider_name ASC
-            LIMIT 5;
-            """,
-            (DEFAULT_SEASON,),
-            fetch="all",
-        )
-
-        count_row = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")
-        rider_count = count_row["c"] if count_row else 0
+    count_row = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")
+    rider_count = count_row["c"] if count_row else 0
 
     return render_template(
         "index.html",
@@ -359,9 +318,9 @@ def rules_page():
 @app.route("/upload", methods=["GET", "POST"])
 def upload_page():
     message = None
+    user = current_user()
 
     if request.method == "POST":
-        user = current_user()
         if not user:
             return redirect(url_for("index"))
 
@@ -410,12 +369,10 @@ def upload_page():
         """,
         fetch="all",
     )
+
     return render_template("upload.html", events=events, message=message)
 
 
-# =========================
-# DISCORD AUTH
-# =========================
 @app.route("/auth/discord/login")
 def discord_login():
     if not oauth_ready():
@@ -497,6 +454,7 @@ def discord_callback():
         "mxb_name": row.get("mxb_name"),
         "steam_id": row.get("steam_id"),
     }
+
     return redirect(url_for("profile"))
 
 
@@ -543,6 +501,7 @@ def profile():
             "mxb_name": row.get("mxb_name"),
             "steam_id": row.get("steam_id"),
         }
+
         return redirect(url_for("profile"))
 
     row = db_exec(
@@ -559,9 +518,6 @@ def profile():
     return render_template("profile.html", profile=row)
 
 
-# =========================
-# API
-# =========================
 @app.route("/api/stats")
 def api_stats():
     user_count = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")["c"]
