@@ -1,30 +1,51 @@
 import os
 import asyncio
+from datetime import datetime
 from typing import Optional
 
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
 import psycopg2
 import psycopg2.extras
 
+
+# =========================
+# ENV
+# =========================
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
+DEFAULT_SEASON = os.getenv("DEFAULT_SEASON", "S1")
 RACE_DIRECTOR_ROLE_ID = os.getenv("RACE_DIRECTOR_ROLE_ID")
 RACE_ANNOUNCEMENTS_CHANNEL_ID = os.getenv("RACE_ANNOUNCEMENTS_CHANNEL_ID")
-DEFAULT_SEASON = os.getenv("DEFAULT_SEASON", "S1")
 
 if not DISCORD_BOT_TOKEN:
     raise RuntimeError("Missing DISCORD_BOT_TOKEN env var")
 if not DATABASE_URL:
     raise RuntimeError("Missing DATABASE_URL env var")
+if not DISCORD_GUILD_ID:
+    raise RuntimeError("Missing DISCORD_GUILD_ID env var")
 
-GUILD_ID_INT = int(DISCORD_GUILD_ID) if DISCORD_GUILD_ID else None
+GUILD_ID_INT = int(DISCORD_GUILD_ID)
 RACE_DIRECTOR_ROLE_ID_INT = int(RACE_DIRECTOR_ROLE_ID) if RACE_DIRECTOR_ROLE_ID else None
-ANNOUNCE_CHANNEL_ID_INT = int(RACE_ANNOUNCEMENTS_CHANNEL_ID) if RACE_ANNOUNCEMENTS_CHANNEL_ID else None
+RACE_ANNOUNCEMENTS_CHANNEL_ID_INT = int(RACE_ANNOUNCEMENTS_CHANNEL_ID) if RACE_ANNOUNCEMENTS_CHANNEL_ID else None
 
 
+# =========================
+# DISCORD SETUP
+# =========================
+intents = discord.Intents.default()
+intents.guilds = True
+intents.members = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+GUILD_OBJ = discord.Object(id=GUILD_ID_INT)
+
+
+# =========================
+# DATABASE
+# =========================
 def db_conn():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
@@ -95,11 +116,14 @@ def init_db():
         """
     )
 
+    # Safe upgrades for old schemas
     db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id TEXT;")
     db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_name TEXT;")
     db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS mxb_name TEXT;")
     db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_id TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS name TEXT;")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS track TEXT;")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS class_name TEXT;")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
@@ -107,6 +131,7 @@ def init_db():
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS start_time TIMESTAMP NULL;")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_discord_id TEXT;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
     db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS event_id INTEGER;")
     db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
@@ -118,6 +143,7 @@ def init_db():
     db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0;")
     db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS penalty_points INTEGER DEFAULT 0;")
     db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS notes TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
     db_exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);")
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_event ON race_results(event_id);")
@@ -125,80 +151,159 @@ def init_db():
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_season_round ON race_results(season, round_number);")
 
 
-def is_race_director(member: discord.Member) -> bool:
-    if member.guild_permissions.administrator:
-        return True
-    if RACE_DIRECTOR_ROLE_ID_INT is None:
+# =========================
+# HELPERS
+# =========================
+def is_race_director(interaction: discord.Interaction) -> bool:
+    if not RACE_DIRECTOR_ROLE_ID_INT:
         return False
-    return any(role.id == RACE_DIRECTOR_ROLE_ID_INT for role in member.roles)
+    if not interaction.user or not isinstance(interaction.user, discord.Member):
+        return False
+    return any(role.id == RACE_DIRECTOR_ROLE_ID_INT for role in interaction.user.roles)
 
 
-async def announce(guild: Optional[discord.Guild], message: str):
-    if not guild or not ANNOUNCE_CHANNEL_ID_INT:
+def ama_points(position: int) -> int:
+    table = {
+        1: 26, 2: 23, 3: 21, 4: 19, 5: 18, 6: 17, 7: 16, 8: 15, 9: 14, 10: 13,
+        11: 12, 12: 11, 13: 10, 14: 9, 15: 8, 16: 7, 17: 6, 18: 5, 19: 4, 20: 3,
+        21: 2, 22: 1,
+    }
+    return table.get(position, 0)
+
+
+def fmt_event_line(event) -> str:
+    start_str = "TBA"
+    if event.get("start_time"):
+        try:
+            start_str = event["start_time"].strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            start_str = str(event["start_time"])
+    return (
+        f"**ID {event['id']}** — {event.get('name') or 'Unnamed Event'} | "
+        f"{event.get('track') or 'Unknown Track'} | "
+        f"{event.get('class_name') or 'Unknown Class'} | "
+        f"{event.get('season') or DEFAULT_SEASON} Round {event.get('round_number') or 1} | "
+        f"{event.get('status') or 'open'} | {start_str}"
+    )
+
+
+async def announce_event_created(event_row):
+    if not RACE_ANNOUNCEMENTS_CHANNEL_ID_INT:
         return
-    channel = guild.get_channel(ANNOUNCE_CHANNEL_ID_INT)
-    if channel:
-        await channel.send(message)
+    channel = bot.get_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID_INT)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID_INT)
+        except Exception:
+            return
+    if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+        return
+
+    embed = discord.Embed(
+        title=f"{event_row.get('class_name', 'MX')} — {event_row.get('name', 'Event Created')}",
+        color=discord.Color.blurple(),
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(name="Track", value=event_row.get("track") or "TBA", inline=True)
+    embed.add_field(name="Season", value=event_row.get("season") or DEFAULT_SEASON, inline=True)
+    embed.add_field(name="Round", value=str(event_row.get("round_number") or 1), inline=True)
+    embed.add_field(name="Status", value=event_row.get("status") or "open", inline=True)
+    if event_row.get("start_time"):
+        embed.add_field(name="Start", value=str(event_row["start_time"]), inline=False)
+    embed.set_footer(text=f"Event ID: {event_row['id']}")
+    await channel.send(embed=embed)
 
 
-class LeagueBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.guilds = True
-        intents.members = True
-        intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents)
+async def announce_results(event_row, result_rows):
+    if not RACE_ANNOUNCEMENTS_CHANNEL_ID_INT:
+        return
+    channel = bot.get_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID_INT)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID_INT)
+        except Exception:
+            return
+    if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+        return
 
-    async def setup_hook(self):
-        init_db()
-        if GUILD_ID_INT:
-            guild_obj = discord.Object(id=GUILD_ID_INT)
-            self.tree.copy_global_to(guild=guild_obj)
-            synced = await self.tree.sync(guild=guild_obj)
-            print(f"Synced {len(synced)} guild commands to {GUILD_ID_INT}")
-        else:
-            synced = await self.tree.sync()
-            print(f"Synced {len(synced)} global commands")
+    lines = []
+    for r in result_rows[:10]:
+        total = int((r.get("points") or 0) - (r.get("penalty_points") or 0))
+        lines.append(
+            f"**P{r.get('position') or '-'}** {r.get('rider_name') or 'Unknown'} — "
+            f"{total} pts"
+        )
+    if not lines:
+        lines = ["No results entered yet."]
+
+    embed = discord.Embed(
+        title=f"Results — {event_row.get('name') or 'Event'}",
+        description="\n".join(lines),
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(name="Track", value=event_row.get("track") or "TBA", inline=True)
+    embed.add_field(name="Class", value=event_row.get("class_name") or "TBA", inline=True)
+    embed.add_field(name="Round", value=str(event_row.get("round_number") or 1), inline=True)
+    embed.set_footer(text=f"Event ID: {event_row['id']}")
+    await channel.send(embed=embed)
 
 
-bot = LeagueBot()
+async def sync_commands():
+    try:
+        synced = await bot.tree.sync(guild=GUILD_OBJ)
+        print(f"Synced {len(synced)} guild commands")
+    except Exception as e:
+        print(f"Command sync failed: {e}")
 
 
+# =========================
+# EVENTS
+# =========================
 @bot.event
 async def on_ready():
-    print("====================================")
     print(f"BOT ONLINE: {bot.user} ({bot.user.id})")
-    print("====================================")
+    init_db()
+    await sync_commands()
 
 
-@bot.tree.command(name="ping", description="Check if the bot is online")
+# =========================
+# COMMANDS
+# =========================
+@bot.tree.command(name="ping", description="Check if the bot is online", guild=GUILD_OBJ)
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Pong! 12 O'Clock Boyz bot is online.", ephemeral=True)
+    await interaction.response.send_message("Pong. Bot is online.", ephemeral=True)
 
 
-@bot.tree.command(name="league_help", description="Show available league commands")
+@bot.tree.command(name="league_help", description="Show league commands", guild=GUILD_OBJ)
 async def league_help(interaction: discord.Interaction):
-    msg = (
-        "🏁 **12 O'Clock Boyz League Commands**\n\n"
-        "**Public**\n"
-        "`/ping` — bot status\n"
-        "`/register_mxb` — save MX Bikes name + Steam\n"
-        "`/events` — list recent events\n"
-        "`/standings` — show class standings\n"
-        "`/rider` — rider profile lookup\n\n"
-        "**Race Director**\n"
-        "`/create_event`\n"
-        "`/close_event`\n"
-        "`/add_result`\n"
-        "`/penalty`\n"
+    embed = discord.Embed(
+        title="12 O'Clock Boyz — League Commands",
+        color=discord.Color.blurple()
     )
-    await interaction.response.send_message(msg, ephemeral=True)
+    embed.description = (
+        "`/ping` — bot status\n"
+        "`/register_mxb` — set your MX Bikes name + Steam ID\n"
+        "`/rider` — view a rider profile\n"
+        "`/events` — list events\n"
+        "`/standings` — show standings by class\n"
+        "`/create_event` — race director only\n"
+        "`/close_event` — race director only\n"
+        "`/add_result` — race director only\n"
+        "`/penalty` — race director only\n"
+        "`/post_results` — race director only\n"
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="register_mxb", description="Register or update your MX Bikes rider name")
-@app_commands.describe(mxb_name="Your in-game MX Bikes name", steam_id="Optional Steam profile or Steam ID")
+@bot.tree.command(name="register_mxb", description="Register your MX Bikes rider name", guild=GUILD_OBJ)
+@app_commands.describe(
+    mxb_name="Your in-game MX Bikes rider name",
+    steam_id="Your Steam ID or Steam profile text"
+)
 async def register_mxb(interaction: discord.Interaction, mxb_name: str, steam_id: Optional[str] = None):
-    await interaction.response.defer(ephemeral=True)
+    discord_id = str(interaction.user.id)
+    discord_name = interaction.user.display_name
 
     db_exec(
         """
@@ -210,118 +315,85 @@ async def register_mxb(interaction: discord.Interaction, mxb_name: str, steam_id
             mxb_name = EXCLUDED.mxb_name,
             steam_id = EXCLUDED.steam_id;
         """,
-        (
-            str(interaction.user.id),
-            str(interaction.user),
-            mxb_name.strip(),
-            steam_id.strip() if steam_id else None,
-        ),
+        (discord_id, discord_name, mxb_name.strip(), (steam_id or "").strip() or None),
     )
 
-    await interaction.followup.send(
-        f"✅ Registered MX Bikes name as **{mxb_name.strip()}**",
-        ephemeral=True,
+    await interaction.response.send_message(
+        f"Registered.\nMX Bikes name: **{mxb_name.strip()}**"
+        + (f"\nSteam ID: **{steam_id.strip()}**" if steam_id and steam_id.strip() else ""),
+        ephemeral=True
     )
 
 
-@bot.tree.command(name="rider", description="Look up a rider profile")
-@app_commands.describe(name="Discord name or MX Bikes rider name")
-async def rider(interaction: discord.Interaction, name: str):
-    await interaction.response.defer(ephemeral=True)
-
+@bot.tree.command(name="rider", description="View a rider profile", guild=GUILD_OBJ)
+@app_commands.describe(member="Discord member to look up")
+async def rider(interaction: discord.Interaction, member: discord.Member):
     row = db_exec(
         """
-        SELECT discord_id, discord_name, mxb_name, steam_id
+        SELECT discord_name, mxb_name, steam_id, created_at
         FROM users
-        WHERE LOWER(COALESCE(discord_name, '')) = LOWER(%s)
-           OR LOWER(COALESCE(mxb_name, '')) = LOWER(%s)
+        WHERE discord_id = %s
         LIMIT 1;
         """,
-        (name.strip(), name.strip()),
+        (str(member.id),),
         fetch="one",
     )
 
     if not row:
-        await interaction.followup.send("Rider not found.", ephemeral=True)
+        await interaction.response.send_message("That rider is not registered yet.", ephemeral=True)
         return
 
-    msg = (
-        f"👤 **Rider Profile**\n"
-        f"**Discord:** {row.get('discord_name') or 'N/A'}\n"
-        f"**MX Bikes Name:** {row.get('mxb_name') or 'N/A'}\n"
-        f"**Steam ID:** {row.get('steam_id') or 'N/A'}\n"
-        f"**Discord ID:** {row.get('discord_id') or 'N/A'}"
-    )
-    await interaction.followup.send(msg, ephemeral=True)
+    embed = discord.Embed(title=f"Rider Profile — {member.display_name}", color=discord.Color.blurple())
+    embed.add_field(name="Discord", value=row.get("discord_name") or member.display_name, inline=False)
+    embed.add_field(name="MX Bikes", value=row.get("mxb_name") or "Not set", inline=False)
+    embed.add_field(name="Steam", value=row.get("steam_id") or "Not set", inline=False)
+    embed.set_footer(text="12 O'Clock Boyz League")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="create_event", description="Create a race event")
+@bot.tree.command(name="create_event", description="Create a new race event", guild=GUILD_OBJ)
 @app_commands.describe(
     name="Event name",
     track="Track name",
     class_name="450 / 250 / Open",
-    season="Season name",
-    round_number="Round number"
+    round_number="Round number",
+    season="Season code like S1"
 )
 async def create_event(
     interaction: discord.Interaction,
     name: str,
     track: str,
     class_name: str,
-    season: Optional[str] = DEFAULT_SEASON,
-    round_number: Optional[int] = 1,
+    round_number: int,
+    season: Optional[str] = None
 ):
-    await interaction.response.defer(ephemeral=True)
-
-    if not isinstance(interaction.user, discord.Member) or not is_race_director(interaction.user):
-        await interaction.followup.send("❌ Race Director role required.", ephemeral=True)
+    if not is_race_director(interaction):
+        await interaction.response.send_message("You need the Race Director role.", ephemeral=True)
         return
 
-    event = db_exec(
+    season = (season or DEFAULT_SEASON).strip()
+    row = db_exec(
         """
         INSERT INTO events (name, track, class_name, season, round_number, status, created_by_discord_id)
         VALUES (%s, %s, %s, %s, %s, 'open', %s)
         RETURNING *;
         """,
-        (
-            name.strip(),
-            track.strip(),
-            class_name.strip(),
-            (season or DEFAULT_SEASON).strip(),
-            int(round_number or 1),
-            str(interaction.user.id),
-        ),
+        (name.strip(), track.strip(), class_name.strip(), season, round_number, str(interaction.user.id)),
         fetch="one",
     )
 
-    await interaction.followup.send(
-        f"✅ Event created\n"
-        f"**ID:** {event['id']}\n"
-        f"**Name:** {event['name']}\n"
-        f"**Track:** {event['track']}\n"
-        f"**Class:** {event['class_name']}\n"
-        f"**Season:** {event['season']}\n"
-        f"**Round:** {event['round_number']}",
-        ephemeral=True,
+    await interaction.response.send_message(
+        f"Event created.\n{fmt_event_line(row)}",
+        ephemeral=True
     )
-
-    await announce(
-        interaction.guild,
-        f"🏁 **New Event Created**\n"
-        f"**{event['name']}**\n"
-        f"Track: **{event['track']}**\n"
-        f"Class: **{event['class_name']}**\n"
-        f"Season: **{event['season']}** | Round **{event['round_number']}**"
-    )
+    await announce_event_created(row)
 
 
-@bot.tree.command(name="close_event", description="Close a race event")
+@bot.tree.command(name="close_event", description="Close an event", guild=GUILD_OBJ)
 @app_commands.describe(event_id="Event ID")
 async def close_event(interaction: discord.Interaction, event_id: int):
-    await interaction.response.defer(ephemeral=True)
-
-    if not isinstance(interaction.user, discord.Member) or not is_race_director(interaction.user):
-        await interaction.followup.send("❌ Race Director role required.", ephemeral=True)
+    if not is_race_director(interaction):
+        await interaction.response.send_message("You need the Race Director role.", ephemeral=True)
         return
 
     row = db_exec(
@@ -336,170 +408,175 @@ async def close_event(interaction: discord.Interaction, event_id: int):
     )
 
     if not row:
-        await interaction.followup.send("❌ Event not found.", ephemeral=True)
+        await interaction.response.send_message("Event not found.", ephemeral=True)
         return
 
-    await interaction.followup.send(f"✅ Closed event **{row['name']}**", ephemeral=True)
-    await announce(interaction.guild, f"🔒 **Event Closed**\n**{row['name']}** (ID {row['id']})")
+    await interaction.response.send_message(f"Closed event ID {event_id}.", ephemeral=True)
 
 
-@bot.tree.command(name="events", description="List recent events")
-async def events(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
+@bot.tree.command(name="events", description="List recent events", guild=GUILD_OBJ)
+@app_commands.describe(
+    season="Season code like S1",
+    class_name="450 / 250 / Open",
+    status="open / closed"
+)
+async def events(
+    interaction: discord.Interaction,
+    season: Optional[str] = None,
+    class_name: Optional[str] = None,
+    status: Optional[str] = None
+):
+    sql = """
+    SELECT id, name, track, class_name, season, round_number, start_time, status
+    FROM events
+    WHERE 1=1
+    """
+    params = []
 
-    rows = db_exec(
-        """
-        SELECT id, name, track, class_name, season, round_number, status
-        FROM events
-        ORDER BY id DESC
-        LIMIT 10;
-        """,
-        fetch="all",
-    )
+    if season and season.strip():
+        sql += " AND season = %s"
+        params.append(season.strip())
+    if class_name and class_name.strip():
+        sql += " AND class_name = %s"
+        params.append(class_name.strip())
+    if status and status.strip():
+        sql += " AND status = %s"
+        params.append(status.strip())
+
+    sql += " ORDER BY id DESC LIMIT 15;"
+
+    rows = db_exec(sql, tuple(params), fetch="all")
 
     if not rows:
-        await interaction.followup.send("No events created yet.", ephemeral=True)
+        await interaction.response.send_message("No events found.", ephemeral=True)
         return
 
-    msg = "🏁 **Recent Events**\n\n"
-    for e in rows:
-        msg += (
-            f"**ID {e['id']}** — {e['name']} | {e['track']} | "
-            f"{e['class_name']} | {e['season']} R{e['round_number']} | {e['status']}\n"
-        )
-
-    await interaction.followup.send(msg, ephemeral=True)
+    lines = [fmt_event_line(r) for r in rows]
+    embed = discord.Embed(title="Recent Events", description="\n".join(lines[:10]), color=discord.Color.blurple())
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="add_result", description="Add a rider result to an event")
+@bot.tree.command(name="add_result", description="Add a race result", guild=GUILD_OBJ)
 @app_commands.describe(
     event_id="Event ID",
     rider_name="MX Bikes rider name",
     position="Finish position",
-    points="Points awarded",
-    discord_id="Optional Discord ID",
-    notes="Optional notes"
+    penalty_points="Penalty points if any",
+    notes="Reason or notes"
 )
 async def add_result(
     interaction: discord.Interaction,
     event_id: int,
     rider_name: str,
     position: int,
-    points: int,
-    discord_id: Optional[str] = None,
-    notes: Optional[str] = None,
+    penalty_points: Optional[int] = 0,
+    notes: Optional[str] = None
 ):
-    await interaction.response.defer(ephemeral=True)
-
-    if not isinstance(interaction.user, discord.Member) or not is_race_director(interaction.user):
-        await interaction.followup.send("❌ Race Director role required.", ephemeral=True)
+    if not is_race_director(interaction):
+        await interaction.response.send_message("You need the Race Director role.", ephemeral=True)
         return
 
-    event = db_exec(
+    event_row = db_exec(
         "SELECT * FROM events WHERE id = %s LIMIT 1;",
         (event_id,),
         fetch="one",
     )
-
-    if not event:
-        await interaction.followup.send("❌ Event not found.", ephemeral=True)
+    if not event_row:
+        await interaction.response.send_message("Event not found.", ephemeral=True)
         return
 
-    db_exec(
+    rider_user = db_exec(
+        "SELECT * FROM users WHERE LOWER(mxb_name) = LOWER(%s) LIMIT 1;",
+        (rider_name.strip(),),
+        fetch="one",
+    )
+
+    points = ama_points(position)
+    result_row = db_exec(
         """
-        INSERT INTO race_results (event_id, season, round_number, class_name, discord_id, rider_name, position, points, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+        INSERT INTO race_results
+        (event_id, season, round_number, class_name, discord_id, rider_name, position, points, penalty_points, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *;
         """,
         (
-            event["id"],
-            event["season"],
-            event["round_number"],
-            event["class_name"],
-            discord_id.strip() if discord_id else None,
+            event_row["id"],
+            event_row["season"],
+            event_row["round_number"],
+            event_row["class_name"],
+            rider_user["discord_id"] if rider_user else None,
             rider_name.strip(),
-            int(position),
-            int(points),
-            notes.strip() if notes else None,
+            position,
+            points,
+            penalty_points or 0,
+            (notes or "").strip() or None,
         ),
+        fetch="one",
     )
 
-    await interaction.followup.send(
-        f"✅ Added result\n"
-        f"**Rider:** {rider_name}\n"
-        f"**Position:** {position}\n"
-        f"**Points:** {points}\n"
-        f"**Event:** {event['name']}",
-        ephemeral=True,
+    total = int((result_row["points"] or 0) - (result_row["penalty_points"] or 0))
+    await interaction.response.send_message(
+        f"Result added.\n"
+        f"Event: **{event_row['name']}**\n"
+        f"Rider: **{rider_name.strip()}**\n"
+        f"Position: **{position}**\n"
+        f"AMA Points: **{points}**\n"
+        f"Penalty: **{penalty_points or 0}**\n"
+        f"Total Awarded: **{total}**",
+        ephemeral=True
     )
 
 
-@bot.tree.command(name="penalty", description="Apply a points penalty")
+@bot.tree.command(name="penalty", description="Apply or update a rider penalty", guild=GUILD_OBJ)
 @app_commands.describe(
-    rider_name="Rider name",
-    class_name="450 / 250 / Open",
-    points="Points to remove",
-    season="Season name",
-    round_number="Round number",
+    result_id="Result ID",
+    penalty_points="Penalty points to subtract",
     notes="Penalty reason"
 )
 async def penalty(
     interaction: discord.Interaction,
-    rider_name: str,
-    class_name: str,
-    points: int,
-    season: Optional[str] = DEFAULT_SEASON,
-    round_number: Optional[int] = 1,
-    notes: Optional[str] = None,
+    result_id: int,
+    penalty_points: int,
+    notes: Optional[str] = None
 ):
-    await interaction.response.defer(ephemeral=True)
-
-    if not isinstance(interaction.user, discord.Member) or not is_race_director(interaction.user):
-        await interaction.followup.send("❌ Race Director role required.", ephemeral=True)
+    if not is_race_director(interaction):
+        await interaction.response.send_message("You need the Race Director role.", ephemeral=True)
         return
 
     row = db_exec(
         """
         UPDATE race_results
-        SET penalty_points = COALESCE(penalty_points, 0) + %s,
-            notes = COALESCE(notes, '') || %s
-        WHERE id = (
-            SELECT id
-            FROM race_results
-            WHERE rider_name = %s
-              AND class_name = %s
-              AND season = %s
-              AND round_number = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        )
+        SET penalty_points = %s,
+            notes = %s
+        WHERE id = %s
         RETURNING *;
         """,
-        (
-            int(points),
-            f" | PENALTY: {notes}" if notes else " | PENALTY APPLIED",
-            rider_name.strip(),
-            class_name.strip(),
-            (season or DEFAULT_SEASON).strip(),
-            int(round_number or 1),
-        ),
+        (penalty_points, (notes or "").strip() or None, result_id),
         fetch="one",
     )
 
     if not row:
-        await interaction.followup.send("❌ Rider result not found.", ephemeral=True)
+        await interaction.response.send_message("Result not found.", ephemeral=True)
         return
 
-    await interaction.followup.send(
-        f"⚠️ Penalty applied to **{rider_name}**\nRemoved: **{points} pts**",
-        ephemeral=True,
+    await interaction.response.send_message(
+        f"Penalty updated for **{row['rider_name']}**.\n"
+        f"Penalty points: **{penalty_points}**",
+        ephemeral=True
     )
 
 
-@bot.tree.command(name="standings", description="Show standings by class")
-@app_commands.describe(class_name="450 / 250 / Open", season="Season name")
-async def standings(interaction: discord.Interaction, class_name: str, season: Optional[str] = DEFAULT_SEASON):
-    await interaction.response.defer(ephemeral=True)
-
+@bot.tree.command(name="standings", description="Show championship standings", guild=GUILD_OBJ)
+@app_commands.describe(
+    class_name="450 / 250 / Open",
+    season="Season code like S1"
+)
+async def standings(
+    interaction: discord.Interaction,
+    class_name: str = "450",
+    season: Optional[str] = None
+):
+    season = (season or DEFAULT_SEASON).strip()
     rows = db_exec(
         """
         SELECT
@@ -509,40 +586,65 @@ async def standings(interaction: discord.Interaction, class_name: str, season: O
         WHERE class_name = %s
           AND season = %s
         GROUP BY rider_name
-        ORDER BY total_points DESC, rider_name ASC
-        LIMIT 20;
+        ORDER BY total_points DESC, rider_name ASC;
         """,
-        (class_name.strip(), (season or DEFAULT_SEASON).strip()),
+        (class_name.strip(), season),
         fetch="all",
     )
 
     if not rows:
-        await interaction.followup.send(
-            f"No standings yet for **{class_name}** in **{season or DEFAULT_SEASON}**.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("No standings yet for that class/season.", ephemeral=True)
         return
 
-    msg = f"🏆 **{class_name} Standings** — {season or DEFAULT_SEASON}\n\n"
-    for i, row in enumerate(rows, start=1):
-        msg += f"**{i}.** {row['rider_name']} — **{row['total_points']} pts**\n"
+    lines = []
+    for i, row in enumerate(rows[:15], start=1):
+        lines.append(f"**{i}.** {row['rider_name']} — **{row['total_points']} pts**")
 
-    await interaction.followup.send(msg, ephemeral=True)
+    embed = discord.Embed(
+        title=f"{class_name.strip()} Standings — {season}",
+        description="\n".join(lines),
+        color=discord.Color.gold()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+@bot.tree.command(name="post_results", description="Post event results into race announcements", guild=GUILD_OBJ)
+@app_commands.describe(event_id="Event ID")
+async def post_results(interaction: discord.Interaction, event_id: int):
+    if not is_race_director(interaction):
+        await interaction.response.send_message("You need the Race Director role.", ephemeral=True)
+        return
+
+    event_row = db_exec(
+        "SELECT * FROM events WHERE id = %s LIMIT 1;",
+        (event_id,),
+        fetch="one",
+    )
+    if not event_row:
+        await interaction.response.send_message("Event not found.", ephemeral=True)
+        return
+
+    results = db_exec(
+        """
+        SELECT rider_name, position, points, penalty_points
+        FROM race_results
+        WHERE event_id = %s
+        ORDER BY position ASC NULLS LAST, rider_name ASC;
+        """,
+        (event_id,),
+        fetch="all",
+    )
+
+    await announce_results(event_row, results)
+    await interaction.response.send_message("Results posted to announcements.", ephemeral=True)
+
+
+# =========================
+# MAIN
+# =========================
 async def main():
-    backoff = 5
-    while True:
-        try:
-            await bot.start(DISCORD_BOT_TOKEN)
-        except discord.HTTPException as e:
-            print(f"Discord HTTPException: {e}")
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
-        except Exception as e:
-            print(f"Bot crashed: {e}")
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+    async with bot:
+        await bot.start(DISCORD_BOT_TOKEN)
 
 
 if __name__ == "__main__":
