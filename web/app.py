@@ -8,7 +8,7 @@ import requests
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-secret-key")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-secret-key-now")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
@@ -18,6 +18,9 @@ DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "https://discord.gg/")
 DEFAULT_SEASON = os.getenv("DEFAULT_SEASON", "S1")
 
 
+# =========================
+# DB
+# =========================
 def db_conn():
     if not DATABASE_URL:
         raise RuntimeError("Missing DATABASE_URL env var")
@@ -58,7 +61,7 @@ def init_db():
         """
         CREATE TABLE IF NOT EXISTS events (
             id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
+            name TEXT,
             track TEXT,
             class_name TEXT,
             season TEXT DEFAULT 'S1',
@@ -90,12 +93,13 @@ def init_db():
         """
     )
 
-    db_exec("CREATE INDEX IF NOT EXISTS idx_results_event_id ON race_results(event_id);")
-    db_exec("CREATE INDEX IF NOT EXISTS idx_results_class ON race_results(class_name);")
-    db_exec("CREATE INDEX IF NOT EXISTS idx_results_season_round ON race_results(season, round_number);")
-
+    # Safe migrations
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_name TEXT;")
     db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS mxb_name TEXT;")
     db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_id TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS track TEXT;")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS class_name TEXT;")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
@@ -103,8 +107,24 @@ def init_db():
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS start_time TIMESTAMP NULL;")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';")
     db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_discord_id TEXT;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS event_id INTEGER;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS class_name TEXT DEFAULT '450';")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS discord_id TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS rider_name TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS position INTEGER;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0;")
     db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS penalty_points INTEGER DEFAULT 0;")
     db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS notes TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+    db_exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_results_event ON race_results(event_id);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_results_class ON race_results(class_name);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_results_season_round ON race_results(season, round_number);")
 
 
 @app.before_request
@@ -113,24 +133,15 @@ def ensure_db():
         init_db()
 
 
+# =========================
+# HELPERS
+# =========================
 def current_user():
     return session.get("user")
 
 
 def oauth_ready() -> bool:
     return bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI)
-
-
-def parse_dt(value: Optional[str]):
-    if not value:
-        return None
-    try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M")
-    except Exception:
-        try:
-            return datetime.fromisoformat(value)
-        except Exception:
-            return None
 
 
 @app.context_processor
@@ -143,28 +154,35 @@ def inject_globals():
     }
 
 
+# =========================
+# PAGES
+# =========================
 @app.route("/")
 def index():
     recent_events = []
     standings_450 = []
     standings_250 = []
+    rider_count = 0
 
     if DATABASE_URL:
         recent_events = db_exec(
             """
-            SELECT id, name, track, class_name, season, round_number, status, start_time
+            SELECT id, name, track, class_name, season, round_number, start_time, status
             FROM events
             ORDER BY id DESC
-            LIMIT 5;
+            LIMIT 6;
             """,
             fetch="all",
         )
 
         standings_450 = db_exec(
             """
-            SELECT rider_name, SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+            SELECT
+                rider_name,
+                SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
             FROM race_results
-            WHERE class_name = '450' AND season = %s
+            WHERE class_name = '450'
+              AND season = %s
             GROUP BY rider_name
             ORDER BY total_points DESC, rider_name ASC
             LIMIT 5;
@@ -175,9 +193,12 @@ def index():
 
         standings_250 = db_exec(
             """
-            SELECT rider_name, SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+            SELECT
+                rider_name,
+                SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
             FROM race_results
-            WHERE class_name = '250' AND season = %s
+            WHERE class_name = '250'
+              AND season = %s
             GROUP BY rider_name
             ORDER BY total_points DESC, rider_name ASC
             LIMIT 5;
@@ -186,14 +207,215 @@ def index():
             fetch="all",
         )
 
+        count_row = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")
+        rider_count = count_row["c"] if count_row else 0
+
     return render_template(
         "index.html",
         recent_events=recent_events,
         standings_450=standings_450,
         standings_250=standings_250,
+        rider_count=rider_count,
     )
 
 
+@app.route("/events")
+def events_page():
+    season = request.args.get("season", DEFAULT_SEASON)
+    class_name = request.args.get("class", "").strip()
+    status = request.args.get("status", "").strip()
+
+    sql = """
+    SELECT id, name, track, class_name, season, round_number, start_time, status
+    FROM events
+    WHERE season = %s
+    """
+    params = [season]
+
+    if class_name:
+        sql += " AND class_name = %s"
+        params.append(class_name)
+
+    if status:
+        sql += " AND status = %s"
+        params.append(status)
+
+    sql += " ORDER BY round_number ASC, id ASC;"
+
+    rows = db_exec(sql, tuple(params), fetch="all")
+    return render_template(
+        "events.html",
+        events=rows,
+        season=season,
+        class_name=class_name,
+        status=status,
+    )
+
+
+@app.route("/event/<int:event_id>")
+def event_page(event_id: int):
+    event = db_exec(
+        """
+        SELECT *
+        FROM events
+        WHERE id = %s
+        LIMIT 1;
+        """,
+        (event_id,),
+        fetch="one",
+    )
+
+    if not event:
+        return "Event not found", 404
+
+    results = db_exec(
+        """
+        SELECT rider_name, position, points, penalty_points, notes
+        FROM race_results
+        WHERE event_id = %s
+        ORDER BY position ASC NULLS LAST, rider_name ASC;
+        """,
+        (event_id,),
+        fetch="all",
+    )
+
+    return render_template("event.html", event=event, results=results)
+
+
+@app.route("/standings")
+def standings_page():
+    season = request.args.get("season", DEFAULT_SEASON)
+    class_name = request.args.get("class", "450")
+
+    rows = db_exec(
+        """
+        SELECT
+            rider_name,
+            SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+        FROM race_results
+        WHERE class_name = %s
+          AND season = %s
+        GROUP BY rider_name
+        ORDER BY total_points DESC, rider_name ASC;
+        """,
+        (class_name, season),
+        fetch="all",
+    )
+
+    return render_template(
+        "standings.html",
+        rows=rows,
+        season=season,
+        class_name=class_name,
+    )
+
+
+@app.route("/riders")
+def riders_page():
+    rows = db_exec(
+        """
+        SELECT discord_name, mxb_name, steam_id, created_at
+        FROM users
+        ORDER BY created_at DESC, discord_name ASC;
+        """,
+        fetch="all",
+    )
+    return render_template("riders.html", riders=rows)
+
+
+@app.route("/schedule")
+def schedule_page():
+    season = request.args.get("season", DEFAULT_SEASON)
+    rows = db_exec(
+        """
+        SELECT id, name, track, class_name, season, round_number, start_time, status
+        FROM events
+        WHERE season = %s
+        ORDER BY round_number ASC, id ASC;
+        """,
+        (season,),
+        fetch="all",
+    )
+    return render_template("schedule.html", schedule=rows, season=season)
+
+
+@app.route("/rules")
+def rules_page():
+    rules = [
+        "Respect all riders, staff, and officials at all times.",
+        "No intentional cutting, ramming, brake-checking, or dirty riding.",
+        "Race Director decisions are final unless formally reviewed.",
+        "All riders must use their registered MX Bikes rider name.",
+        "Penalties may be applied for unsafe riding or breaking league rules.",
+        "Standings are calculated from race points minus penalty points.",
+        "False result submissions or impersonation can lead to removal.",
+        "Official updates are posted on the website and Discord.",
+        "Riders are responsible for joining the correct event and class.",
+        "Unsportsmanlike conduct may result in suspensions or disqualification.",
+    ]
+    return render_template("rules.html", rules=rules)
+
+
+@app.route("/upload", methods=["GET", "POST"])
+def upload_page():
+    message = None
+
+    if request.method == "POST":
+        user = current_user()
+        if not user:
+            return redirect(url_for("index"))
+
+        event_id = request.form.get("event_id", type=int)
+        rider_name = request.form.get("rider_name", "").strip()
+        position = request.form.get("position", type=int)
+        points = request.form.get("points", type=int)
+        notes = request.form.get("notes", "").strip() or None
+
+        event = db_exec(
+            "SELECT * FROM events WHERE id = %s LIMIT 1;",
+            (event_id,),
+            fetch="one",
+        )
+
+        if not event:
+            message = "Event not found."
+        elif not rider_name:
+            message = "Rider name is required."
+        else:
+            db_exec(
+                """
+                INSERT INTO race_results (event_id, season, round_number, class_name, discord_id, rider_name, position, points, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                """,
+                (
+                    event["id"],
+                    event["season"],
+                    event["round_number"],
+                    event["class_name"],
+                    user["discord_id"],
+                    rider_name,
+                    position,
+                    points or 0,
+                    notes,
+                ),
+            )
+            message = "Result uploaded successfully."
+
+    events = db_exec(
+        """
+        SELECT id, name, class_name, season, round_number, status
+        FROM events
+        ORDER BY id DESC
+        LIMIT 20;
+        """,
+        fetch="all",
+    )
+    return render_template("upload.html", events=events, message=message)
+
+
+# =========================
+# DISCORD AUTH
+# =========================
 @app.route("/auth/discord/login")
 def discord_login():
     if not oauth_ready():
@@ -337,191 +559,9 @@ def profile():
     return render_template("profile.html", profile=row)
 
 
-@app.route("/events")
-def events_page():
-    season = request.args.get("season", DEFAULT_SEASON)
-    class_name = request.args.get("class", "").strip()
-    status = request.args.get("status", "").strip()
-
-    sql = """
-    SELECT id, name, track, class_name, season, round_number, start_time, status
-    FROM events
-    WHERE season = %s
-    """
-    params = [season]
-
-    if class_name:
-        sql += " AND class_name = %s"
-        params.append(class_name)
-
-    if status:
-        sql += " AND status = %s"
-        params.append(status)
-
-    sql += " ORDER BY round_number ASC, id ASC"
-
-    rows = db_exec(sql, tuple(params), fetch="all")
-    return render_template("events.html", events=rows, season=season, class_name=class_name, status=status)
-
-
-@app.route("/event/<int:event_id>")
-def event_page(event_id: int):
-    event = db_exec(
-        """
-        SELECT *
-        FROM events
-        WHERE id = %s
-        LIMIT 1;
-        """,
-        (event_id,),
-        fetch="one",
-    )
-    if not event:
-        return "Event not found", 404
-
-    results = db_exec(
-        """
-        SELECT rider_name, position, points, penalty_points, notes
-        FROM race_results
-        WHERE event_id = %s
-        ORDER BY position ASC NULLS LAST, rider_name ASC;
-        """,
-        (event_id,),
-        fetch="all",
-    )
-
-    return render_template("event.html", event=event, results=results)
-
-
-@app.route("/standings")
-def standings_page():
-    season = request.args.get("season", DEFAULT_SEASON)
-    class_name = request.args.get("class", "450")
-
-    rows = db_exec(
-        """
-        SELECT
-            rider_name,
-            SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
-        FROM race_results
-        WHERE class_name = %s
-          AND season = %s
-        GROUP BY rider_name
-        ORDER BY total_points DESC, rider_name ASC;
-        """,
-        (class_name, season),
-        fetch="all",
-    )
-
-    return render_template(
-        "standings.html",
-        rows=rows,
-        season=season,
-        class_name=class_name,
-    )
-
-
-@app.route("/riders")
-def riders_page():
-    rows = db_exec(
-        """
-        SELECT discord_name, mxb_name, steam_id, created_at
-        FROM users
-        ORDER BY created_at DESC, discord_name ASC;
-        """,
-        fetch="all",
-    )
-    return render_template("riders.html", riders=rows)
-
-
-@app.route("/schedule")
-def schedule_page():
-    season = request.args.get("season", DEFAULT_SEASON)
-    rows = db_exec(
-        """
-        SELECT id, name, track, class_name, season, round_number, start_time, status
-        FROM events
-        WHERE season = %s
-        ORDER BY round_number ASC, id ASC;
-        """,
-        (season,),
-        fetch="all",
-    )
-    return render_template("schedule.html", schedule=rows, season=season)
-
-
-@app.route("/rules")
-def rules_page():
-    rules = [
-        "Respect all riders, staff, and officials.",
-        "No intentional cutting, ramming, or dirty riding.",
-        "Race Director decisions are final unless formally reviewed.",
-        "All riders must use their registered MX Bikes rider name.",
-        "Penalties may be applied for unsafe riding or breaking event rules.",
-        "Standings use event results minus any applied penalty points.",
-        "False result submissions or impersonation may lead to removal.",
-        "Use the website and Discord together for official updates.",
-    ]
-    return render_template("rules.html", rules=rules)
-
-
-@app.route("/upload", methods=["GET", "POST"])
-def upload_page():
-    message = None
-
-    if request.method == "POST":
-        user = current_user()
-        if not user:
-            return redirect(url_for("index"))
-
-        event_id = request.form.get("event_id", type=int)
-        rider_name = request.form.get("rider_name", "").strip()
-        position = request.form.get("position", type=int)
-        points = request.form.get("points", type=int)
-        notes = request.form.get("notes", "").strip() or None
-
-        event = db_exec(
-            "SELECT * FROM events WHERE id = %s LIMIT 1;",
-            (event_id,),
-            fetch="one",
-        )
-
-        if not event:
-            message = "Event not found."
-        elif not rider_name:
-            message = "Rider name is required."
-        else:
-            db_exec(
-                """
-                INSERT INTO race_results (event_id, season, round_number, class_name, discord_id, rider_name, position, points, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-                """,
-                (
-                    event["id"],
-                    event["season"],
-                    event["round_number"],
-                    event["class_name"],
-                    user["discord_id"],
-                    rider_name,
-                    position,
-                    points or 0,
-                    notes,
-                ),
-            )
-            message = "Result uploaded successfully."
-
-    events = db_exec(
-        """
-        SELECT id, name, class_name, season, round_number, status
-        FROM events
-        ORDER BY id DESC
-        LIMIT 20;
-        """,
-        fetch="all",
-    )
-    return render_template("upload.html", events=events, message=message)
-
-
+# =========================
+# API
+# =========================
 @app.route("/api/stats")
 def api_stats():
     user_count = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")["c"]
