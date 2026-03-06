@@ -1,37 +1,35 @@
-<!doctype html>
-<html><head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Schedule</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head><body>
-<div class="bg"></div>
-<div class="wrap">
-  <a class="btn btn-outline" href="/">← Home</a>
-  <div class="card">
-    <h2>Schedule</h2>
-    {% if events|length == 0 %}
-      <p class="hint">No events yet. Use the admin create event form (or I’ll add Discord command next).</p>
-    {% endif %}
-    <ul>
-      {% for e in events %}
-        <li>
-          <a href="/event/{{e.id}}">{{e.title}}</a>
-          — <b>{{e.league}}</b> {{e.class}} — {{e.event_date}}
-          ({{e.season}})
-        </li>
-      {% endfor %}
-    </ul>
+{% extends "base.html" %}
 
-    <hr style="border-color:rgba(255,255,255,.08)">
-    <h3>Quick Create Event (temporary)</h3>
-    <form class="form" method="POST" action="/admin/create_event">
-      <input name="title" placeholder="Title (e.g. Round 1)" required>
-      <input name="league" placeholder="MX or SX" required>
-      <input name="class" placeholder="450 / 250 / 250-2T" required>
-      <input name="season" placeholder="Season (e.g. S1-2026)" required>
-      <input name="event_date" placeholder="UTC datetime (e.g. 2026-03-10 09:00:00)" required>
-      <button class="btn btn-glow" type="submit">Create</button>
-    </form>
-  </div>
+{% block content %}
+<div class="card">
+    <h1 class="title">Schedule</h1>
+    <p class="sub">Season {{ season }}</p>
+
+    {% if schedule %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Round</th>
+                    <th>Event</th>
+                    <th>Track</th>
+                    <th>Class</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in schedule %}
+                <tr>
+                    <td>{{ e.round_number }}</td>
+                    <td><a href="{{ url_for('event_page', event_id=e.id) }}">{{ e.name }}</a></td>
+                    <td>{{ e.track }}</td>
+                    <td>{{ e.class_name }}</td>
+                    <td>{{ e.status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="muted">No schedule available yet.</p>
+    {% endif %}
 </div>
-</body></html>
+{% endblock %}
