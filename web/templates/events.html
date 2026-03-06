@@ -1,30 +1,39 @@
 {% extends "base.html" %}
+
 {% block content %}
-<section class="card">
-  <h1>Events</h1>
-  <p class="muted">Latest 100 events</p>
+<div class="card">
+    <h1 class="title">Events</h1>
+    <p class="sub">Season {{ season }}</p>
 
-  <div class="table">
-    <div class="tr head">
-      <div>ID</div><div>Mode</div><div>Class</div><div>Title</div><div>Season</div><div>Start</div><div>Track</div>
-    </div>
-    {% for e in events %}
-      <div class="tr">
-        <div>{{ e.id }}</div>
-        <div><span class="tag">{{ e.mode }}</span></div>
-        <div><span class="tag">{{ e.class }}</span></div>
-        <div>{{ e.title }}</div>
-        <div>{{ e.season }}</div>
-        <div>{{ e.start_time }}</div>
-        <div>{{ e.track }}</div>
-      </div>
-    {% endfor %}
-  </div>
-
-  {% if user %}
-    <div class="row">
-      <a class="btn" href="{{ url_for('upload_page') }}">Upload Results</a>
-    </div>
-  {% endif %}
-</section>
+    {% if events %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Track</th>
+                    <th>Class</th>
+                    <th>Season</th>
+                    <th>Round</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in events %}
+                <tr>
+                    <td>{{ e.id }}</td>
+                    <td><a href="{{ url_for('event_page', event_id=e.id) }}">{{ e.name }}</a></td>
+                    <td>{{ e.track }}</td>
+                    <td>{{ e.class_name }}</td>
+                    <td>{{ e.season }}</td>
+                    <td>{{ e.round_number }}</td>
+                    <td>{{ e.status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="muted">No events found.</p>
+    {% endif %}
+</div>
 {% endblock %}
