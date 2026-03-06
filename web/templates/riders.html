@@ -1,19 +1,33 @@
-<!doctype html>
-<html><head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Riders</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head><body>
-<div class="bg"></div>
-<div class="wrap">
-  <a class="btn btn-outline" href="/">← Home</a>
-  <div class="card">
-    <h2>Registered Riders</h2>
-    <ul>
-      {% for r in riders %}
-        <li>{{ r.discord_name }} — SteamID: {{ r.steam_id if r.steam_id else "—" }}</li>
-      {% endfor %}
-    </ul>
-  </div>
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h1 class="title">Registered Riders</h1>
+    <p class="sub">All riders currently registered in the league system.</p>
+
+    {% if riders %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Discord</th>
+                    <th>MX Bikes Name</th>
+                    <th>Steam</th>
+                    <th>Joined</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in riders %}
+                <tr>
+                    <td>{{ r.discord_name or "" }}</td>
+                    <td>{{ r.mxb_name or "" }}</td>
+                    <td>{{ r.steam_id or "" }}</td>
+                    <td>{{ r.created_at }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="muted">No riders registered yet.</p>
+    {% endif %}
 </div>
-</body></html>
+{% endblock %}
