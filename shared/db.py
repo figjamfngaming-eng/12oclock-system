@@ -1,66 +1,69 @@
 import os
 import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg2.extras
+from contextlib import contextmanager
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if not DATABASE_URL:
+    # Don't crash import-time (so pages can still load), but DB ops will fail with clear error.
+    DATABASE_URL = None
+
+
+@contextmanager
 def get_conn():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    if not DATABASE_URL:
+        raise RuntimeError("Missing DATABASE_URL env var")
+    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def exec_sql(sql: str, params=None):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params or ())
+        conn.commit()
+
+
+def q(sql: str, params=None):
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params or ())
+            rows = cur.fetchall()
+        return rows
+
 
 def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
+    """
+    Creates tables we need if they don't exist.
+    Safe to call repeatedly.
+    """
+    ddl = """
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         discord_id TEXT UNIQUE,
-        username TEXT,
-        mx_name TEXT,
-        steam_id TEXT,
+        discord_name TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-    """)
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS events (
+    CREATE TABLE IF NOT EXISTS race_results (
         id SERIAL PRIMARY KEY,
-        name TEXT,
-        track TEXT,
-        class TEXT,
-        date TIMESTAMP
+        season TEXT NOT NULL DEFAULT 'S1',
+        round INTEGER NOT NULL DEFAULT 1,
+        class_name TEXT NOT NULL DEFAULT '450',
+        discord_id TEXT,
+        rider_name TEXT,
+        points INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-    """)
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS results (
-        id SERIAL PRIMARY KEY,
-        event_id INTEGER,
-        user_id INTEGER,
-        position INTEGER,
-        points INTEGER
-    );
-    """)
+    CREATE INDEX IF NOT EXISTS idx_race_results_season_round
+      ON race_results (season, round);
 
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
-def exec1(query, params=None):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(query, params)
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
-def q(query, params=None):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(query, params)
-    result = cur.fetchall()
-    cur.close()
-    conn.close()
-    return result
+    CREATE INDEX IF NOT EXISTS idx_race_results_class
+      ON race_results (class_name);
+    """
+    exec_sql(ddl)
