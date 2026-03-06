@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for, abort
 import psycopg2
 import psycopg2.extras
 import requests
@@ -13,6 +13,9 @@ DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "https://discord.gg/")
 DEFAULT_SEASON = os.getenv("DEFAULT_SEASON", "S1")
+ADMIN_DISCORD_IDS = {
+    x.strip() for x in os.getenv("ADMIN_DISCORD_IDS", "").split(",") if x.strip()
+}
 
 
 def db_conn():
@@ -38,8 +41,6 @@ def db_exec(sql: str, params=None, fetch: str = "none"):
 
 
 def init_db():
-    
-
     db_exec(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -89,6 +90,34 @@ def init_db():
         """
     )
 
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_name TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS mxb_name TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_id TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS name TEXT;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS track TEXT;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS class_name TEXT;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS start_time TIMESTAMP NULL;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_discord_id TEXT;")
+    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS event_id INTEGER;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS class_name TEXT DEFAULT '450';")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS discord_id TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS rider_name TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS position INTEGER;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS penalty_points INTEGER DEFAULT 0;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS notes TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
     db_exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);")
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_event ON race_results(event_id);")
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_class ON race_results(class_name);")
@@ -109,6 +138,29 @@ def oauth_ready() -> bool:
     return bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI)
 
 
+def is_admin_user() -> bool:
+    user = current_user()
+    if not user:
+        return False
+    if not ADMIN_DISCORD_IDS:
+        return False
+    return str(user.get("discord_id")) in ADMIN_DISCORD_IDS
+
+
+def require_admin():
+    if not is_admin_user():
+        abort(403)
+
+
+def get_points_for_position(pos: int) -> int:
+    ama = {
+        1: 26, 2: 23, 3: 21, 4: 19, 5: 18, 6: 17, 7: 16, 8: 15, 9: 14, 10: 13,
+        11: 12, 12: 11, 13: 10, 14: 9, 15: 8, 16: 7, 17: 6, 18: 5, 19: 4, 20: 3,
+        21: 2, 22: 1
+    }
+    return ama.get(pos, 0)
+
+
 @app.context_processor
 def inject_globals():
     return {
@@ -116,6 +168,7 @@ def inject_globals():
         "user": current_user(),
         "oauth_ready": oauth_ready(),
         "default_season": DEFAULT_SEASON,
+        "is_admin_user": is_admin_user(),
     }
 
 
@@ -133,12 +186,10 @@ def index():
 
     standings_450 = db_exec(
         """
-        SELECT
-            rider_name,
-            SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+        SELECT rider_name,
+               SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
         FROM race_results
-        WHERE class_name = '450'
-          AND season = %s
+        WHERE class_name = '450' AND season = %s
         GROUP BY rider_name
         ORDER BY total_points DESC, rider_name ASC
         LIMIT 5;
@@ -149,12 +200,10 @@ def index():
 
     standings_250 = db_exec(
         """
-        SELECT
-            rider_name,
-            SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+        SELECT rider_name,
+               SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
         FROM race_results
-        WHERE class_name = '250'
-          AND season = %s
+        WHERE class_name = '250' AND season = %s
         GROUP BY rider_name
         ORDER BY total_points DESC, rider_name ASC
         LIMIT 5;
@@ -197,8 +246,8 @@ def events_page():
         params.append(status)
 
     sql += " ORDER BY round_number ASC, id ASC;"
-
     rows = db_exec(sql, tuple(params), fetch="all")
+
     return render_template(
         "events.html",
         events=rows,
@@ -211,16 +260,10 @@ def events_page():
 @app.route("/event/<int:event_id>")
 def event_page(event_id: int):
     event = db_exec(
-        """
-        SELECT *
-        FROM events
-        WHERE id = %s
-        LIMIT 1;
-        """,
+        "SELECT * FROM events WHERE id = %s LIMIT 1;",
         (event_id,),
         fetch="one",
     )
-
     if not event:
         return "Event not found", 404
 
@@ -234,7 +277,6 @@ def event_page(event_id: int):
         (event_id,),
         fetch="all",
     )
-
     return render_template("event.html", event=event, results=results)
 
 
@@ -245,9 +287,8 @@ def standings_page():
 
     rows = db_exec(
         """
-        SELECT
-            rider_name,
-            SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+        SELECT rider_name,
+               SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
         FROM race_results
         WHERE class_name = %s
           AND season = %s
@@ -340,7 +381,8 @@ def upload_page():
         else:
             db_exec(
                 """
-                INSERT INTO race_results (event_id, season, round_number, class_name, discord_id, rider_name, position, points, notes)
+                INSERT INTO race_results
+                (event_id, season, round_number, class_name, discord_id, rider_name, position, points, notes)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
                 """,
                 (
@@ -368,6 +410,106 @@ def upload_page():
     )
 
     return render_template("upload.html", events=events, message=message)
+
+
+@app.route("/admin", methods=["GET", "POST"])
+def admin_panel():
+    require_admin()
+    message = None
+
+    if request.method == "POST":
+        action = request.form.get("action", "").strip()
+
+        if action == "create_event":
+            name = request.form.get("name", "").strip()
+            track = request.form.get("track", "").strip()
+            class_name = request.form.get("class_name", "").strip()
+            season = request.form.get("season", DEFAULT_SEASON).strip() or DEFAULT_SEASON
+            round_number = request.form.get("round_number", type=int) or 1
+
+            if name and track and class_name:
+                db_exec(
+                    """
+                    INSERT INTO events (name, track, class_name, season, round_number, status, created_by_discord_id)
+                    VALUES (%s, %s, %s, %s, %s, 'open', %s);
+                    """,
+                    (
+                        name,
+                        track,
+                        class_name,
+                        season,
+                        round_number,
+                        current_user()["discord_id"],
+                    ),
+                )
+                message = "Event created."
+
+        elif action == "close_event":
+            event_id = request.form.get("event_id", type=int)
+            if event_id:
+                db_exec("UPDATE events SET status = 'closed' WHERE id = %s;", (event_id,))
+                message = "Event closed."
+
+        elif action == "add_result":
+            event_id = request.form.get("event_id", type=int)
+            rider_name = request.form.get("rider_name", "").strip()
+            position = request.form.get("position", type=int)
+            penalty_points = request.form.get("penalty_points", type=int) or 0
+            notes = request.form.get("notes", "").strip() or None
+
+            event = db_exec("SELECT * FROM events WHERE id = %s LIMIT 1;", (event_id,), fetch="one")
+            if event and rider_name and position:
+                points = get_points_for_position(position)
+                db_exec(
+                    """
+                    INSERT INTO race_results
+                    (event_id, season, round_number, class_name, rider_name, position, points, penalty_points, notes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                    """,
+                    (
+                        event["id"],
+                        event["season"],
+                        event["round_number"],
+                        event["class_name"],
+                        rider_name,
+                        position,
+                        points,
+                        penalty_points,
+                        notes,
+                    ),
+                )
+                message = "Result added."
+
+        elif action == "apply_penalty":
+            result_id = request.form.get("result_id", type=int)
+            penalty_points = request.form.get("penalty_points", type=int) or 0
+            notes = request.form.get("notes", "").strip() or None
+
+            if result_id:
+                db_exec(
+                    """
+                    UPDATE race_results
+                    SET penalty_points = %s,
+                        notes = %s
+                    WHERE id = %s;
+                    """,
+                    (penalty_points, notes, result_id),
+                )
+                message = "Penalty updated."
+
+    events = db_exec("SELECT * FROM events ORDER BY id DESC LIMIT 20;", fetch="all")
+    results = db_exec(
+        """
+        SELECT rr.*, e.name AS event_name
+        FROM race_results rr
+        LEFT JOIN events e ON rr.event_id = e.id
+        ORDER BY rr.id DESC
+        LIMIT 30;
+        """,
+        fetch="all",
+    )
+
+    return render_template("admin.html", message=message, events=events, results=results)
 
 
 @app.route("/auth/discord/login")
@@ -474,8 +616,7 @@ def profile():
         db_exec(
             """
             UPDATE users
-            SET mxb_name = %s,
-                steam_id = %s
+            SET mxb_name = %s, steam_id = %s
             WHERE discord_id = %s;
             """,
             (mxb_name, steam_id, user["discord_id"]),
