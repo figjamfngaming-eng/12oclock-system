@@ -1,25 +1,15 @@
 {% extends "base.html" %}
-
 {% block content %}
 <div class="card">
-    <h1 class="title">MX Bikes League System</h1>
-    <p class="sub">
-        Sign in with Discord, register your MX Bikes rider name, follow the race schedule,
-        upload results, and track championship standings.
-    </p>
+    <h1 class="title">12 O'Clock Boyz League System V2</h1>
+    <p class="sub">Race registration, gate picks, team standings, protests, and championship management.</p>
 
     <div class="links" style="margin-bottom:18px;">
-        {% if user %}
-            <a class="btn primary" href="{{ url_for('profile') }}">Open Profile</a>
-            <a class="btn" href="{{ url_for('upload_page') }}">Upload Result</a>
-            {% if is_admin_user %}
-                <a class="btn" href="{{ url_for('admin_panel') }}">Admin Panel</a>
-            {% endif %}
-        {% else %}
-            {% if oauth_ready %}
-                <a class="btn primary" href="{{ url_for('discord_login') }}">Sign In with Discord</a>
-            {% endif %}
-            <a class="btn" href="{{ invite_url }}" target="_blank">Join Discord</a>
+        <a class="btn primary" href="{{ url_for('register_page') }}">Join Race</a>
+        <a class="btn" href="{{ url_for('events_page') }}">View Events</a>
+        <a class="btn" href="{{ url_for('team_standings_page') }}">Team Standings</a>
+        {% if is_admin_user %}
+            <a class="btn" href="{{ url_for('admin_panel') }}">Admin Panel</a>
         {% endif %}
     </div>
 
@@ -33,8 +23,8 @@
             <div class="v">{{ rider_count }}</div>
         </div>
         <div class="stat">
-            <div class="k">Status</div>
-            <div class="v" style="font-size:20px;">League System Live</div>
+            <div class="k">Event Registrations</div>
+            <div class="v">{{ reg_count }}</div>
         </div>
     </div>
 </div>
@@ -42,29 +32,26 @@
 <div class="section grid two">
     <div class="card">
         <h2>Latest Events</h2>
-        {% if recent_events %}
-            <div class="list">
-                {% for e in recent_events %}
-                    <a class="list-item" href="{{ url_for('event_page', event_id=e.id) }}">
-                        <strong>{{ e.name }}</strong><br>
-                        <span class="muted">{{ e.track }} · {{ e.class_name }} · {{ e.season }} Round {{ e.round_number }}</span><br>
-                        <span class="tag">{{ e.status }}</span>
-                    </a>
-                {% endfor %}
-            </div>
-        {% else %}
-            <p class="muted">No events created yet.</p>
-        {% endif %}
+        <div class="list">
+            {% for e in recent_events %}
+            <a class="list-item" href="{{ url_for('event_page', event_id=e.id) }}">
+                <strong>{{ e.name }}</strong><br>
+                <span class="muted">{{ e.track }} · {{ e.class_name }} · Round {{ e.round_number }}</span>
+            </a>
+            {% else %}
+            <div class="list-item muted">No events yet.</div>
+            {% endfor %}
+        </div>
     </div>
 
     <div class="card">
-        <h2>How It Works</h2>
+        <h2>How V2 Works</h2>
         <div class="list">
             <div class="list-item">1. Sign in with Discord</div>
-            <div class="list-item">2. Set your MX Bikes rider name</div>
-            <div class="list-item">3. Race your event and class</div>
-            <div class="list-item">4. Upload or enter race results</div>
-            <div class="list-item">5. Standings update automatically</div>
+            <div class="list-item">2. Set rider name / team / number</div>
+            <div class="list-item">3. Register for an event</div>
+            <div class="list-item">4. Gate picks get randomized</div>
+            <div class="list-item">5. Results update rider + team standings</div>
         </div>
     </div>
 </div>
@@ -72,54 +59,30 @@
 <div class="section grid two">
     <div class="card">
         <h2>450 Standings</h2>
-        {% if standings_450 %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Rider</th>
-                        <th>Points</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for r in standings_450 %}
-                    <tr>
-                        <td>{{ loop.index }}</td>
-                        <td>{{ r.rider_name }}</td>
-                        <td>{{ r.total_points }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        {% else %}
-            <p class="muted">No 450 standings yet.</p>
-        {% endif %}
+        <table>
+            <thead><tr><th>#</th><th>Rider</th><th>Points</th></tr></thead>
+            <tbody>
+            {% for r in standings_450 %}
+            <tr><td>{{ loop.index }}</td><td>{{ r.rider_name }}</td><td>{{ r.total_points }}</td></tr>
+            {% else %}
+            <tr><td colspan="3">No standings yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 
     <div class="card">
         <h2>250 Standings</h2>
-        {% if standings_250 %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Rider</th>
-                        <th>Points</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for r in standings_250 %}
-                    <tr>
-                        <td>{{ loop.index }}</td>
-                        <td>{{ r.rider_name }}</td>
-                        <td>{{ r.total_points }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        {% else %}
-            <p class="muted">No 250 standings yet.</p>
-        {% endif %}
+        <table>
+            <thead><tr><th>#</th><th>Rider</th><th>Points</th></tr></thead>
+            <tbody>
+            {% for r in standings_250 %}
+            <tr><td>{{ loop.index }}</td><td>{{ r.rider_name }}</td><td>{{ r.total_points }}</td></tr>
+            {% else %}
+            <tr><td colspan="3">No standings yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}
