@@ -1,4 +1,5 @@
 import os
+import random
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for, abort
 import psycopg2
 import psycopg2.extras
@@ -41,21 +42,20 @@ def db_exec(sql: str, params=None, fetch: str = "none"):
 
 
 def init_db():
-    db_exec(
-        """
+    db_exec("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
             discord_id TEXT UNIQUE,
             discord_name TEXT,
             mxb_name TEXT,
             steam_id TEXT,
+            team_name TEXT,
+            rider_number TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        """
-    )
+    """)
 
-    db_exec(
-        """
+    db_exec("""
         CREATE TABLE IF NOT EXISTS events (
             id SERIAL PRIMARY KEY,
             name TEXT,
@@ -68,11 +68,9 @@ def init_db():
             created_by_discord_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        """
-    )
+    """)
 
-    db_exec(
-        """
+    db_exec("""
         CREATE TABLE IF NOT EXISTS race_results (
             id SERIAL PRIMARY KEY,
             event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
@@ -81,47 +79,52 @@ def init_db():
             class_name TEXT DEFAULT '450',
             discord_id TEXT,
             rider_name TEXT,
+            team_name TEXT,
             position INTEGER,
             points INTEGER DEFAULT 0,
             penalty_points INTEGER DEFAULT 0,
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        """
-    )
+    """)
 
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_name TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS mxb_name TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_id TEXT;")
-    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+    db_exec("""
+        CREATE TABLE IF NOT EXISTS registrations (
+            id SERIAL PRIMARY KEY,
+            event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+            discord_id TEXT,
+            rider_name TEXT,
+            class_name TEXT,
+            team_name TEXT,
+            gate_pick INTEGER,
+            status TEXT DEFAULT 'registered',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS name TEXT;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS track TEXT;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS class_name TEXT;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS start_time TIMESTAMP NULL;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_discord_id TEXT;")
-    db_exec("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+    db_exec("""
+        CREATE TABLE IF NOT EXISTS protests (
+            id SERIAL PRIMARY KEY,
+            event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+            discord_id TEXT,
+            rider_name TEXT,
+            against_rider TEXT,
+            reason TEXT,
+            status TEXT DEFAULT 'open',
+            admin_note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS event_id INTEGER;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS class_name TEXT DEFAULT '450';")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS discord_id TEXT;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS rider_name TEXT;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS position INTEGER;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS penalty_points INTEGER DEFAULT 0;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS notes TEXT;")
-    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_name TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS rider_number TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS team_name TEXT;")
 
     db_exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);")
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_event ON race_results(event_id);")
     db_exec("CREATE INDEX IF NOT EXISTS idx_results_class ON race_results(class_name);")
-    db_exec("CREATE INDEX IF NOT EXISTS idx_results_season_round ON race_results(season, round_number);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_reg_event ON registrations(event_id);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_protest_event ON protests(event_id);")
 
 
 @app.before_request
@@ -141,8 +144,6 @@ def oauth_ready() -> bool:
 def is_admin_user() -> bool:
     user = current_user()
     if not user:
-        return False
-    if not ADMIN_DISCORD_IDS:
         return False
     return str(user.get("discord_id")) in ADMIN_DISCORD_IDS
 
@@ -174,18 +175,14 @@ def inject_globals():
 
 @app.route("/")
 def index():
-    recent_events = db_exec(
-        """
+    recent_events = db_exec("""
         SELECT id, name, track, class_name, season, round_number, start_time, status
         FROM events
         ORDER BY id DESC
         LIMIT 6;
-        """,
-        fetch="all",
-    )
+    """, fetch="all")
 
-    standings_450 = db_exec(
-        """
+    standings_450 = db_exec("""
         SELECT rider_name,
                SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
         FROM race_results
@@ -193,13 +190,9 @@ def index():
         GROUP BY rider_name
         ORDER BY total_points DESC, rider_name ASC
         LIMIT 5;
-        """,
-        (DEFAULT_SEASON,),
-        fetch="all",
-    )
+    """, (DEFAULT_SEASON,), fetch="all")
 
-    standings_250 = db_exec(
-        """
+    standings_250 = db_exec("""
         SELECT rider_name,
                SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
         FROM race_results
@@ -207,13 +200,10 @@ def index():
         GROUP BY rider_name
         ORDER BY total_points DESC, rider_name ASC
         LIMIT 5;
-        """,
-        (DEFAULT_SEASON,),
-        fetch="all",
-    )
+    """, (DEFAULT_SEASON,), fetch="all")
 
-    count_row = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")
-    rider_count = count_row["c"] if count_row else 0
+    rider_count = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")["c"]
+    reg_count = db_exec("SELECT COUNT(*)::int AS c FROM registrations;", fetch="one")["c"]
 
     return render_template(
         "index.html",
@@ -221,63 +211,43 @@ def index():
         standings_450=standings_450,
         standings_250=standings_250,
         rider_count=rider_count,
+        reg_count=reg_count,
     )
 
 
 @app.route("/events")
 def events_page():
     season = request.args.get("season", DEFAULT_SEASON)
-    class_name = request.args.get("class", "").strip()
-    status = request.args.get("status", "").strip()
-
-    sql = """
-    SELECT id, name, track, class_name, season, round_number, start_time, status
-    FROM events
-    WHERE season = %s
-    """
-    params = [season]
-
-    if class_name:
-        sql += " AND class_name = %s"
-        params.append(class_name)
-
-    if status:
-        sql += " AND status = %s"
-        params.append(status)
-
-    sql += " ORDER BY round_number ASC, id ASC;"
-    rows = db_exec(sql, tuple(params), fetch="all")
-
-    return render_template(
-        "events.html",
-        events=rows,
-        season=season,
-        class_name=class_name,
-        status=status,
-    )
+    rows = db_exec("""
+        SELECT id, name, track, class_name, season, round_number, start_time, status
+        FROM events
+        WHERE season = %s
+        ORDER BY round_number ASC, id ASC;
+    """, (season,), fetch="all")
+    return render_template("events.html", events=rows, season=season)
 
 
 @app.route("/event/<int:event_id>")
 def event_page(event_id: int):
-    event = db_exec(
-        "SELECT * FROM events WHERE id = %s LIMIT 1;",
-        (event_id,),
-        fetch="one",
-    )
+    event = db_exec("SELECT * FROM events WHERE id = %s LIMIT 1;", (event_id,), fetch="one")
     if not event:
         return "Event not found", 404
 
-    results = db_exec(
-        """
-        SELECT rider_name, position, points, penalty_points, notes
+    results = db_exec("""
+        SELECT rider_name, team_name, position, points, penalty_points, notes
         FROM race_results
         WHERE event_id = %s
         ORDER BY position ASC NULLS LAST, rider_name ASC;
-        """,
-        (event_id,),
-        fetch="all",
-    )
-    return render_template("event.html", event=event, results=results)
+    """, (event_id,), fetch="all")
+
+    regs = db_exec("""
+        SELECT rider_name, team_name, gate_pick, status
+        FROM registrations
+        WHERE event_id = %s
+        ORDER BY gate_pick ASC NULLS LAST, rider_name ASC;
+    """, (event_id,), fetch="all")
+
+    return render_template("event.html", event=event, results=results, regs=regs)
 
 
 @app.route("/standings")
@@ -285,54 +255,51 @@ def standings_page():
     season = request.args.get("season", DEFAULT_SEASON)
     class_name = request.args.get("class", "450")
 
-    rows = db_exec(
-        """
+    rows = db_exec("""
         SELECT rider_name,
                SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
         FROM race_results
-        WHERE class_name = %s
-          AND season = %s
+        WHERE class_name = %s AND season = %s
         GROUP BY rider_name
         ORDER BY total_points DESC, rider_name ASC;
-        """,
-        (class_name, season),
-        fetch="all",
-    )
+    """, (class_name, season), fetch="all")
 
-    return render_template(
-        "standings.html",
-        rows=rows,
-        season=season,
-        class_name=class_name,
-    )
+    return render_template("standings.html", rows=rows, season=season, class_name=class_name)
+
+
+@app.route("/team-standings")
+def team_standings_page():
+    season = request.args.get("season", DEFAULT_SEASON)
+    rows = db_exec("""
+        SELECT COALESCE(team_name, 'Independent') AS team_name,
+               SUM(COALESCE(points, 0) - COALESCE(penalty_points, 0))::int AS total_points
+        FROM race_results
+        WHERE season = %s
+        GROUP BY COALESCE(team_name, 'Independent')
+        ORDER BY total_points DESC, team_name ASC;
+    """, (season,), fetch="all")
+    return render_template("teams.html", rows=rows, season=season)
 
 
 @app.route("/riders")
 def riders_page():
-    rows = db_exec(
-        """
-        SELECT discord_name, mxb_name, steam_id, created_at
+    rows = db_exec("""
+        SELECT discord_name, mxb_name, steam_id, team_name, rider_number, created_at
         FROM users
         ORDER BY created_at DESC, discord_name ASC;
-        """,
-        fetch="all",
-    )
+    """, fetch="all")
     return render_template("riders.html", riders=rows)
 
 
 @app.route("/schedule")
 def schedule_page():
     season = request.args.get("season", DEFAULT_SEASON)
-    rows = db_exec(
-        """
+    rows = db_exec("""
         SELECT id, name, track, class_name, season, round_number, start_time, status
         FROM events
         WHERE season = %s
         ORDER BY round_number ASC, id ASC;
-        """,
-        (season,),
-        fetch="all",
-    )
+    """, (season,), fetch="all")
     return render_template("schedule.html", schedule=rows, season=season)
 
 
@@ -353,6 +320,86 @@ def rules_page():
     return render_template("rules.html", rules=rules)
 
 
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    user = current_user()
+    if not user:
+        return redirect(url_for("index"))
+
+    message = None
+
+    if request.method == "POST":
+        event_id = request.form.get("event_id", type=int)
+        rider_name = request.form.get("rider_name", "").strip()
+        team_name = request.form.get("team_name", "").strip() or None
+
+        event = db_exec("SELECT * FROM events WHERE id = %s LIMIT 1;", (event_id,), fetch="one")
+        if not event:
+            message = "Event not found."
+        elif event["status"] != "open":
+            message = "Registration is closed for this event."
+        elif not rider_name:
+            message = "Rider name is required."
+        else:
+            existing = db_exec("""
+                SELECT id FROM registrations
+                WHERE event_id = %s AND discord_id = %s
+                LIMIT 1;
+            """, (event_id, user["discord_id"]), fetch="one")
+
+            if existing:
+                message = "You are already registered for this event."
+            else:
+                db_exec("""
+                    INSERT INTO registrations (event_id, discord_id, rider_name, class_name, team_name, status)
+                    VALUES (%s, %s, %s, %s, %s, 'registered');
+                """, (event_id, user["discord_id"], rider_name, event["class_name"], team_name))
+                message = "Registration successful."
+
+    events = db_exec("""
+        SELECT id, name, class_name, season, round_number, status
+        FROM events
+        WHERE status = 'open'
+        ORDER BY id DESC;
+    """, fetch="all")
+
+    return render_template("register.html", events=events, message=message)
+
+
+@app.route("/protests", methods=["GET", "POST"])
+def protests_page():
+    user = current_user()
+    if not user:
+        return redirect(url_for("index"))
+
+    message = None
+
+    if request.method == "POST":
+        event_id = request.form.get("event_id", type=int)
+        rider_name = request.form.get("rider_name", "").strip()
+        against_rider = request.form.get("against_rider", "").strip()
+        reason = request.form.get("reason", "").strip()
+
+        if event_id and rider_name and against_rider and reason:
+            db_exec("""
+                INSERT INTO protests (event_id, discord_id, rider_name, against_rider, reason, status)
+                VALUES (%s, %s, %s, %s, %s, 'open');
+            """, (event_id, user["discord_id"], rider_name, against_rider, reason))
+            message = "Protest submitted."
+
+    protests = db_exec("""
+        SELECT p.*, e.name AS event_name
+        FROM protests p
+        LEFT JOIN events e ON p.event_id = e.id
+        ORDER BY p.id DESC
+        LIMIT 50;
+    """, fetch="all")
+
+    events = db_exec("SELECT id, name FROM events ORDER BY id DESC LIMIT 30;", fetch="all")
+
+    return render_template("protests.html", protests=protests, events=events, message=message)
+
+
 @app.route("/upload", methods=["GET", "POST"])
 def upload_page():
     message = None
@@ -364,50 +411,42 @@ def upload_page():
 
         event_id = request.form.get("event_id", type=int)
         rider_name = request.form.get("rider_name", "").strip()
+        team_name = request.form.get("team_name", "").strip() or None
         position = request.form.get("position", type=int)
         points = request.form.get("points", type=int)
         notes = request.form.get("notes", "").strip() or None
 
-        event = db_exec(
-            "SELECT * FROM events WHERE id = %s LIMIT 1;",
-            (event_id,),
-            fetch="one",
-        )
+        event = db_exec("SELECT * FROM events WHERE id = %s LIMIT 1;", (event_id,), fetch="one")
 
         if not event:
             message = "Event not found."
         elif not rider_name:
             message = "Rider name is required."
         else:
-            db_exec(
-                """
+            db_exec("""
                 INSERT INTO race_results
-                (event_id, season, round_number, class_name, discord_id, rider_name, position, points, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-                """,
-                (
-                    event["id"],
-                    event["season"],
-                    event["round_number"],
-                    event["class_name"],
-                    user["discord_id"],
-                    rider_name,
-                    position,
-                    points or 0,
-                    notes,
-                ),
-            )
+                (event_id, season, round_number, class_name, discord_id, rider_name, team_name, position, points, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """, (
+                event["id"],
+                event["season"],
+                event["round_number"],
+                event["class_name"],
+                user["discord_id"],
+                rider_name,
+                team_name,
+                position,
+                points or 0,
+                notes,
+            ))
             message = "Result uploaded successfully."
 
-    events = db_exec(
-        """
+    events = db_exec("""
         SELECT id, name, class_name, season, round_number, status
         FROM events
         ORDER BY id DESC
         LIMIT 20;
-        """,
-        fetch="all",
-    )
+    """, fetch="all")
 
     return render_template("upload.html", events=events, message=message)
 
@@ -428,20 +467,10 @@ def admin_panel():
             round_number = request.form.get("round_number", type=int) or 1
 
             if name and track and class_name:
-                db_exec(
-                    """
+                db_exec("""
                     INSERT INTO events (name, track, class_name, season, round_number, status, created_by_discord_id)
                     VALUES (%s, %s, %s, %s, %s, 'open', %s);
-                    """,
-                    (
-                        name,
-                        track,
-                        class_name,
-                        season,
-                        round_number,
-                        current_user()["discord_id"],
-                    ),
-                )
+                """, (name, track, class_name, season, round_number, current_user()["discord_id"]))
                 message = "Event created."
 
         elif action == "close_event":
@@ -450,66 +479,41 @@ def admin_panel():
                 db_exec("UPDATE events SET status = 'closed' WHERE id = %s;", (event_id,))
                 message = "Event closed."
 
-        elif action == "add_result":
+        elif action == "draw_gates":
             event_id = request.form.get("event_id", type=int)
-            rider_name = request.form.get("rider_name", "").strip()
-            position = request.form.get("position", type=int)
-            penalty_points = request.form.get("penalty_points", type=int) or 0
-            notes = request.form.get("notes", "").strip() or None
+            regs = db_exec("""
+                SELECT id FROM registrations
+                WHERE event_id = %s
+                ORDER BY id ASC;
+            """, (event_id,), fetch="all")
+            picks = list(range(1, len(regs) + 1))
+            random.shuffle(picks)
+            for reg, gate in zip(regs, picks):
+                db_exec("UPDATE registrations SET gate_pick = %s WHERE id = %s;", (gate, reg["id"]))
+            message = "Gate picks randomized."
 
-            event = db_exec("SELECT * FROM events WHERE id = %s LIMIT 1;", (event_id,), fetch="one")
-            if event and rider_name and position:
-                points = get_points_for_position(position)
-                db_exec(
-                    """
-                    INSERT INTO race_results
-                    (event_id, season, round_number, class_name, rider_name, position, points, penalty_points, notes)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-                    """,
-                    (
-                        event["id"],
-                        event["season"],
-                        event["round_number"],
-                        event["class_name"],
-                        rider_name,
-                        position,
-                        points,
-                        penalty_points,
-                        notes,
-                    ),
-                )
-                message = "Result added."
-
-        elif action == "apply_penalty":
-            result_id = request.form.get("result_id", type=int)
-            penalty_points = request.form.get("penalty_points", type=int) or 0
-            notes = request.form.get("notes", "").strip() or None
-
-            if result_id:
-                db_exec(
-                    """
-                    UPDATE race_results
-                    SET penalty_points = %s,
-                        notes = %s
+        elif action == "resolve_protest":
+            protest_id = request.form.get("protest_id", type=int)
+            status = request.form.get("status", "").strip()
+            admin_note = request.form.get("admin_note", "").strip() or None
+            if protest_id and status:
+                db_exec("""
+                    UPDATE protests
+                    SET status = %s, admin_note = %s
                     WHERE id = %s;
-                    """,
-                    (penalty_points, notes, result_id),
-                )
-                message = "Penalty updated."
+                """, (status, admin_note, protest_id))
+                message = "Protest updated."
 
     events = db_exec("SELECT * FROM events ORDER BY id DESC LIMIT 20;", fetch="all")
-    results = db_exec(
-        """
-        SELECT rr.*, e.name AS event_name
-        FROM race_results rr
-        LEFT JOIN events e ON rr.event_id = e.id
-        ORDER BY rr.id DESC
+    protests = db_exec("""
+        SELECT p.*, e.name AS event_name
+        FROM protests p
+        LEFT JOIN events e ON p.event_id = e.id
+        ORDER BY p.id DESC
         LIMIT 30;
-        """,
-        fetch="all",
-    )
+    """, fetch="all")
 
-    return render_template("admin.html", message=message, events=events, results=results)
+    return render_template("admin.html", message=message, events=events, protests=protests)
 
 
 @app.route("/auth/discord/login")
@@ -550,8 +554,7 @@ def discord_callback():
         timeout=20,
     )
     token_resp.raise_for_status()
-    token_data = token_resp.json()
-    access_token = token_data["access_token"]
+    access_token = token_resp.json()["access_token"]
 
     user_resp = requests.get(
         "https://discord.com/api/users/@me",
@@ -566,34 +569,21 @@ def discord_callback():
     global_name = discord_user.get("global_name")
     discord_name = global_name or username
 
-    db_exec(
-        """
+    db_exec("""
         INSERT INTO users (discord_id, discord_name)
         VALUES (%s, %s)
         ON CONFLICT (discord_id)
         DO UPDATE SET discord_name = EXCLUDED.discord_name;
-        """,
-        (discord_id, discord_name),
-    )
+    """, (discord_id, discord_name))
 
-    row = db_exec(
-        """
-        SELECT discord_id, discord_name, mxb_name, steam_id
+    row = db_exec("""
+        SELECT discord_id, discord_name, mxb_name, steam_id, team_name, rider_number
         FROM users
         WHERE discord_id = %s
         LIMIT 1;
-        """,
-        (discord_id,),
-        fetch="one",
-    )
+    """, (discord_id,), fetch="one")
 
-    session["user"] = {
-        "discord_id": row["discord_id"],
-        "discord_name": row["discord_name"],
-        "mxb_name": row.get("mxb_name"),
-        "steam_id": row.get("steam_id"),
-    }
-
+    session["user"] = dict(row)
     return redirect(url_for("profile"))
 
 
@@ -612,70 +602,47 @@ def profile():
     if request.method == "POST":
         mxb_name = request.form.get("mxb_name", "").strip() or None
         steam_id = request.form.get("steam_id", "").strip() or None
+        team_name = request.form.get("team_name", "").strip() or None
+        rider_number = request.form.get("rider_number", "").strip() or None
 
-        db_exec(
-            """
+        db_exec("""
             UPDATE users
-            SET mxb_name = %s, steam_id = %s
+            SET mxb_name = %s,
+                steam_id = %s,
+                team_name = %s,
+                rider_number = %s
             WHERE discord_id = %s;
-            """,
-            (mxb_name, steam_id, user["discord_id"]),
-        )
+        """, (mxb_name, steam_id, team_name, rider_number, user["discord_id"]))
 
-        row = db_exec(
-            """
-            SELECT discord_id, discord_name, mxb_name, steam_id
+        row = db_exec("""
+            SELECT discord_id, discord_name, mxb_name, steam_id, team_name, rider_number
             FROM users
             WHERE discord_id = %s
             LIMIT 1;
-            """,
-            (user["discord_id"],),
-            fetch="one",
-        )
+        """, (user["discord_id"],), fetch="one")
 
-        session["user"] = {
-            "discord_id": row["discord_id"],
-            "discord_name": row["discord_name"],
-            "mxb_name": row.get("mxb_name"),
-            "steam_id": row.get("steam_id"),
-        }
-
+        session["user"] = dict(row)
         return redirect(url_for("profile"))
 
-    row = db_exec(
-        """
-        SELECT discord_id, discord_name, mxb_name, steam_id
+    row = db_exec("""
+        SELECT discord_id, discord_name, mxb_name, steam_id, team_name, rider_number
         FROM users
         WHERE discord_id = %s
         LIMIT 1;
-        """,
-        (user["discord_id"],),
-        fetch="one",
-    )
+    """, (user["discord_id"],), fetch="one")
 
     return render_template("profile.html", profile=row)
 
 
 @app.route("/api/stats")
 def api_stats():
-    user_count = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")["c"]
-    event_count = db_exec("SELECT COUNT(*)::int AS c FROM events;", fetch="one")["c"]
-    result_count = db_exec("SELECT COUNT(*)::int AS c FROM race_results;", fetch="one")["c"]
-
-    return jsonify(
-        {
-            "users": user_count,
-            "events": event_count,
-            "results": result_count,
-            "season": DEFAULT_SEASON,
-        }
-    )
-
-
-@app.route("/api/discord_stats")
-def api_discord_stats():
-    user_count = db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")["c"]
-    return jsonify({"registered_racers": user_count})
+    return jsonify({
+        "users": db_exec("SELECT COUNT(*)::int AS c FROM users;", fetch="one")["c"],
+        "events": db_exec("SELECT COUNT(*)::int AS c FROM events;", fetch="one")["c"],
+        "results": db_exec("SELECT COUNT(*)::int AS c FROM race_results;", fetch="one")["c"],
+        "registrations": db_exec("SELECT COUNT(*)::int AS c FROM registrations;", fetch="one")["c"],
+        "season": DEFAULT_SEASON,
+    })
 
 
 if __name__ == "__main__":
