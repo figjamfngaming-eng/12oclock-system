@@ -1,13 +1,9 @@
 {% extends "base.html" %}
-
 {% block content %}
 <div class="card">
-    <h1 class="title">Admin Control Panel</h1>
-    <p class="sub">Create events, add race results, close events, and apply penalties.</p>
-
-    {% if message %}
-        <div class="flash">{{ message }}</div>
-    {% endif %}
+    <h1 class="title">Admin Panel V2</h1>
+    <p class="sub">Manage events, gate picks, and protests.</p>
+    {% if message %}<div class="flash">{{ message }}</div>{% endif %}
 </div>
 
 <div class="section grid two">
@@ -15,14 +11,8 @@
         <h2>Create Event</h2>
         <form method="post">
             <input type="hidden" name="action" value="create_event">
-            <div>
-                <label>Event Name</label>
-                <input type="text" name="name" required>
-            </div>
-            <div>
-                <label>Track</label>
-                <input type="text" name="track" required>
-            </div>
+            <div><label>Event Name</label><input type="text" name="name" required></div>
+            <div><label>Track</label><input type="text" name="track" required></div>
             <div>
                 <label>Class</label>
                 <select name="class_name" required>
@@ -31,126 +21,70 @@
                     <option value="Open">Open</option>
                 </select>
             </div>
-            <div>
-                <label>Season</label>
-                <input type="text" name="season" value="{{ default_season }}" required>
-            </div>
-            <div>
-                <label>Round Number</label>
-                <input type="number" name="round_number" min="1" value="1" required>
-            </div>
+            <div><label>Season</label><input type="text" name="season" value="{{ default_season }}" required></div>
+            <div><label>Round</label><input type="number" name="round_number" value="1" min="1" required></div>
             <button class="btn primary" type="submit">Create Event</button>
         </form>
     </div>
 
     <div class="card">
-        <h2>Close Event</h2>
+        <h2>Event Controls</h2>
         <form method="post">
             <input type="hidden" name="action" value="close_event">
             <div>
-                <label>Event</label>
+                <label>Close Event</label>
                 <select name="event_id" required>
                     {% for e in events %}
-                        <option value="{{ e.id }}">ID {{ e.id }} — {{ e.name }} — {{ e.class_name }} — {{ e.status }}</option>
+                    <option value="{{ e.id }}">ID {{ e.id }} — {{ e.name }} — {{ e.status }}</option>
                     {% endfor %}
                 </select>
             </div>
             <button class="btn primary" type="submit">Close Event</button>
         </form>
-    </div>
-</div>
-
-<div class="section grid two">
-    <div class="card">
-        <h2>Add Result</h2>
+        <hr style="margin:18px 0;border-color:rgba(255,255,255,.08);">
         <form method="post">
-            <input type="hidden" name="action" value="add_result">
+            <input type="hidden" name="action" value="draw_gates">
             <div>
-                <label>Event</label>
+                <label>Randomize Gate Picks</label>
                 <select name="event_id" required>
                     {% for e in events %}
-                        <option value="{{ e.id }}">ID {{ e.id }} — {{ e.name }} — {{ e.class_name }}</option>
+                    <option value="{{ e.id }}">ID {{ e.id }} — {{ e.name }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div>
-                <label>Rider Name</label>
-                <input type="text" name="rider_name" required>
-            </div>
-            <div>
-                <label>Finish Position</label>
-                <input type="number" name="position" min="1" required>
-            </div>
-            <div>
-                <label>Penalty Points</label>
-                <input type="number" name="penalty_points" min="0" value="0">
-            </div>
-            <div>
-                <label>Notes</label>
-                <textarea name="notes"></textarea>
-            </div>
-            <button class="btn primary" type="submit">Add Result</button>
-        </form>
-    </div>
-
-    <div class="card">
-        <h2>Apply Penalty</h2>
-        <form method="post">
-            <input type="hidden" name="action" value="apply_penalty">
-            <div>
-                <label>Result</label>
-                <select name="result_id" required>
-                    {% for r in results %}
-                        <option value="{{ r.id }}">
-                            Result {{ r.id }} — {{ r.rider_name }} — {{ r.event_name or 'No Event' }} — Pos {{ r.position }}
-                        </option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>Penalty Points</label>
-                <input type="number" name="penalty_points" min="0" required>
-            </div>
-            <div>
-                <label>Reason</label>
-                <textarea name="notes"></textarea>
-            </div>
-            <button class="btn primary" type="submit">Apply Penalty</button>
+            <button class="btn primary" type="submit">Draw Gates</button>
         </form>
     </div>
 </div>
 
 <div class="section">
     <div class="card">
-        <h2>Latest Results</h2>
-        {% if results %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Event</th>
-                        <th>Rider</th>
-                        <th>Pos</th>
-                        <th>Points</th>
-                        <th>Penalty</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for r in results %}
-                    <tr>
-                        <td>{{ r.id }}</td>
-                        <td>{{ r.event_name or "No Event" }}</td>
-                        <td>{{ r.rider_name }}</td>
-                        <td>{{ r.position }}</td>
-                        <td>{{ r.points }}</td>
-                        <td>{{ r.penalty_points }}</td>
-                    </tr>
+        <h2>Resolve Protests</h2>
+        <form method="post">
+            <input type="hidden" name="action" value="resolve_protest">
+            <div>
+                <label>Protest</label>
+                <select name="protest_id" required>
+                    {% for p in protests %}
+                    <option value="{{ p.id }}">#{{ p.id }} — {{ p.rider_name }} vs {{ p.against_rider }} — {{ p.status }}</option>
                     {% endfor %}
-                </tbody>
-            </table>
-        {% else %}
-            <p class="muted">No results yet.</p>
-        {% endif %}
+                </select>
+            </div>
+            <div>
+                <label>Status</label>
+                <select name="status" required>
+                    <option value="open">Open</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="reviewed">Reviewed</option>
+                </select>
+            </div>
+            <div>
+                <label>Admin Note</label>
+                <textarea name="admin_note"></textarea>
+            </div>
+            <button class="btn primary" type="submit">Update Protest</button>
+        </form>
     </div>
 </div>
 {% endblock %}
