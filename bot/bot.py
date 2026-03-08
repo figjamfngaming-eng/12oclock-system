@@ -218,51 +218,22 @@ async def announce(text: str):
 def build_race_rules_embed():
     embed = discord.Embed(
         title="🏁 12 O'Clock Boyz — Official Race Rules",
-        description=(
-            "These rules apply to all official MX Bikes events, race nights, "
-            "championship rounds, and league sessions."
-        ),
+        description="These rules apply to all official MX Bikes races and league events.",
         color=discord.Color.gold()
     )
     embed.add_field(
         name="🏍 Clean Racing",
-        value=(
-            "• Race hard but fair\n"
-            "• No intentional crashing\n"
-            "• No dirty riding\n"
-            "• Leave racing room when battling"
-        ),
+        value="• Race hard but fair\n• No intentional crashing\n• No dirty riding\n• Leave racing room",
         inline=False
     )
     embed.add_field(
         name="🚫 Not Allowed",
-        value=(
-            "• Intentional takeouts\n"
-            "• Brake checking\n"
-            "• Blocking on purpose\n"
-            "• Track cutting for advantage\n"
-            "• Unsportsmanlike behaviour"
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="🎮 Race Requirements",
-        value=(
-            "• Use your registered MX Bikes rider name\n"
-            "• Join the correct event and class\n"
-            "• Follow Race Director instructions"
-        ),
+        value="• Intentional takeouts\n• Brake checking\n• Blocking on purpose\n• Track cutting\n• Unsportsmanlike behaviour",
         inline=False
     )
     embed.add_field(
         name="⚖️ Penalties",
-        value=(
-            "Breaking race rules may result in:\n"
-            "• Warning\n"
-            "• Position penalty\n"
-            "• Points deduction\n"
-            "• Disqualification"
-        ),
+        value="• Warning\n• Position penalty\n• Points deduction\n• Disqualification",
         inline=False
     )
     embed.set_footer(text="12 O'Clock Boyz MX Bikes League")
@@ -272,41 +243,22 @@ def build_race_rules_embed():
 def build_server_rules_embed():
     embed = discord.Embed(
         title="💬 12 O'Clock Boyz — Official Server Rules",
-        description=(
-            "Welcome to the 12 O'Clock Boyz Discord.\n"
-            "Respect the community, follow staff directions, and keep the server positive."
-        ),
+        description="Respect the community, follow staff directions, and keep the server positive.",
         color=discord.Color.blurple()
     )
     embed.add_field(
         name="✅ Community Rules",
-        value=(
-            "• Respect everyone\n"
-            "• No harassment or hate speech\n"
-            "• No excessive toxicity\n"
-            "• No spam\n"
-            "• Use the correct channels"
-        ),
+        value="• Respect everyone\n• No harassment or hate speech\n• No excessive toxicity\n• No spam\n• Use correct channels",
         inline=False
     )
     embed.add_field(
         name="🚫 Not Allowed",
-        value=(
-            "• Racism or discrimination\n"
-            "• Personal attacks\n"
-            "• Unauthorized advertising\n"
-            "• Starting drama in chat\n"
-            "• Staff disrespect"
-        ),
+        value="• Racism or discrimination\n• Personal attacks\n• Unauthorized advertising\n• Starting drama\n• Staff disrespect",
         inline=False
     )
     embed.add_field(
-        name="⚖️ Staff & Enforcement",
-        value=(
-            "• Follow Admin and Race Director instructions\n"
-            "• Staff decisions are final\n"
-            "• Breaking rules can lead to warnings, mutes, kicks, or bans"
-        ),
+        name="⚖️ Enforcement",
+        value="• Follow Admin and Race Director instructions\n• Staff decisions are final\n• Warnings, mutes, kicks, or bans may apply",
         inline=False
     )
     embed.set_footer(text="12 O'Clock Boyz Discord")
@@ -365,9 +317,12 @@ async def before_auto_rules_repost_loop():
 @bot.event
 async def on_ready():
     init_db()
-    synced = await bot.tree.sync(guild=GUILD_OBJ)
-    print(f"BOT ONLINE: {bot.user}")
-    print(f"Synced {len(synced)} commands")
+    try:
+        synced = await bot.tree.sync(guild=GUILD_OBJ)
+        print(f"BOT ONLINE: {bot.user}")
+        print(f"Synced {len(synced)} commands")
+    except Exception as e:
+        print(f"Sync failed: {e}")
 
     if not auto_rules_repost_loop.is_running():
         auto_rules_repost_loop.start()
@@ -429,7 +384,12 @@ async def register_mxb(
 
 
 @bot.tree.command(name="create_event", description="Create event", guild=GUILD_OBJ)
-@app_commands.describe(name="Event name", track="Track", class_name="Class", round_number="Round")
+@app_commands.describe(
+    name="Event name",
+    track="Track name",
+    class_name="450 / 250 / Open",
+    round_number="Round number"
+)
 async def create_event(
     interaction: discord.Interaction,
     name: str,
@@ -441,14 +401,41 @@ async def create_event(
         await interaction.response.send_message("Race Director only.", ephemeral=True)
         return
 
-    row = db_exec("""
-        INSERT INTO events (name, track, class_name, season, round_number, status, created_by_discord_id)
-        VALUES (%s, %s, %s, %s, %s, 'open', %s)
-        RETURNING *;
-    """, (name, track, class_name, DEFAULT_SEASON, round_number, str(interaction.user.id)), fetch="one")
+    await interaction.response.defer(ephemeral=True)
 
-    await interaction.response.send_message(f"Created event ID {row['id']}: {row['name']}", ephemeral=True)
-    await announce(f"🏁 Event Created — **{row['name']}** | {row['track']} | {row['class_name']} | Round {row['round_number']}")
+    try:
+        row = db_exec("""
+            INSERT INTO events (name, track, class_name, season, round_number, status, created_by_discord_id)
+            VALUES (%s, %s, %s, %s, %s, 'open', %s)
+            RETURNING *;
+        """, (
+            name.strip(),
+            track.strip(),
+            class_name.strip(),
+            DEFAULT_SEASON,
+            int(round_number),
+            str(interaction.user.id)
+        ), fetch="one")
+
+        await interaction.followup.send(
+            f"✅ Event created\n"
+            f"**ID:** {row['id']}\n"
+            f"**Name:** {row['name']}\n"
+            f"**Track:** {row['track']}\n"
+            f"**Class:** {row['class_name']}\n"
+            f"**Season:** {row['season']}\n"
+            f"**Round:** {row['round_number']}",
+            ephemeral=True
+        )
+
+        await announce(
+            f"🏁 Event Created — **{row['name']}** | "
+            f"{row['track']} | {row['class_name']} | Round {row['round_number']}"
+        )
+
+    except Exception as e:
+        print(f"create_event error: {e}")
+        await interaction.followup.send(f"❌ Failed to create event: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="join_race", description="Register into an event", guild=GUILD_OBJ)
