@@ -1,12 +1,11 @@
 import os
 import asyncio
 import random
-from datetime import datetime
 from typing import Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import psycopg2
 import psycopg2.extras
 
@@ -16,6 +15,8 @@ DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 DEFAULT_SEASON = os.getenv("DEFAULT_SEASON", "S1")
 RACE_DIRECTOR_ROLE_ID = os.getenv("RACE_DIRECTOR_ROLE_ID")
 RACE_ANNOUNCEMENTS_CHANNEL_ID = os.getenv("RACE_ANNOUNCEMENTS_CHANNEL_ID")
+RULES_CHANNEL_ID = os.getenv("RULES_CHANNEL_ID")
+SERVER_RULES_CHANNEL_ID = os.getenv("SERVER_RULES_CHANNEL_ID")
 
 if not DISCORD_BOT_TOKEN:
     raise RuntimeError("Missing DISCORD_BOT_TOKEN env var")
@@ -27,6 +28,8 @@ if not DISCORD_GUILD_ID:
 GUILD_ID_INT = int(DISCORD_GUILD_ID)
 RACE_DIRECTOR_ROLE_ID_INT = int(RACE_DIRECTOR_ROLE_ID) if RACE_DIRECTOR_ROLE_ID else None
 RACE_ANNOUNCEMENTS_CHANNEL_ID_INT = int(RACE_ANNOUNCEMENTS_CHANNEL_ID) if RACE_ANNOUNCEMENTS_CHANNEL_ID else None
+RULES_CHANNEL_ID_INT = int(RULES_CHANNEL_ID) if RULES_CHANNEL_ID else None
+SERVER_RULES_CHANNEL_ID_INT = int(SERVER_RULES_CHANNEL_ID) if SERVER_RULES_CHANNEL_ID else None
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -36,6 +39,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 GUILD_OBJ = discord.Object(id=GUILD_ID_INT)
 
 
+# =========================
+# DATABASE
+# =========================
 def db_conn():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
@@ -69,6 +75,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
     db_exec("""
         CREATE TABLE IF NOT EXISTS events (
             id SERIAL PRIMARY KEY,
@@ -83,6 +90,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
     db_exec("""
         CREATE TABLE IF NOT EXISTS race_results (
             id SERIAL PRIMARY KEY,
@@ -100,6 +108,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
     db_exec("""
         CREATE TABLE IF NOT EXISTS registrations (
             id SERIAL PRIMARY KEY,
@@ -113,6 +122,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
     db_exec("""
         CREATE TABLE IF NOT EXISTS protests (
             id SERIAL PRIMARY KEY,
@@ -127,7 +137,49 @@ def init_db():
         );
     """)
 
+    db_exec("""
+        CREATE TABLE IF NOT EXISTS bot_state (
+            state_key TEXT PRIMARY KEY,
+            state_value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_name TEXT;")
+    db_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS rider_number TEXT;")
+    db_exec("ALTER TABLE race_results ADD COLUMN IF NOT EXISTS team_name TEXT;")
+
+    db_exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_results_event ON race_results(event_id);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_results_class ON race_results(class_name);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_reg_event ON registrations(event_id);")
+    db_exec("CREATE INDEX IF NOT EXISTS idx_protest_event ON protests(event_id);")
+
+
+def set_bot_state(key: str, value: Optional[str]):
+    db_exec("""
+        INSERT INTO bot_state (state_key, state_value, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (state_key)
+        DO UPDATE SET
+            state_value = EXCLUDED.state_value,
+            updated_at = CURRENT_TIMESTAMP;
+    """, (key, value))
+
+
+def get_bot_state(key: str) -> Optional[str]:
+    row = db_exec("""
+        SELECT state_value
+        FROM bot_state
+        WHERE state_key = %s
+        LIMIT 1;
+    """, (key,), fetch="one")
+    return row["state_value"] if row and row.get("state_value") is not None else None
+
+
+# =========================
+# HELPERS
+# =========================
 def ama_points(position: int) -> int:
     table = {
         1: 26, 2: 23, 3: 21, 4: 19, 5: 18, 6: 17, 7: 16, 8: 15, 9: 14, 10: 13,
@@ -145,18 +197,171 @@ def is_race_director(interaction: discord.Interaction) -> bool:
     return any(role.id == RACE_DIRECTOR_ROLE_ID_INT for role in interaction.user.roles)
 
 
+async def get_channel_safe(channel_id: int):
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            return None
+    return channel
+
+
 async def announce(text: str):
     if not RACE_ANNOUNCEMENTS_CHANNEL_ID_INT:
         return
-    channel = bot.get_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID_INT)
+    channel = await get_channel_safe(RACE_ANNOUNCEMENTS_CHANNEL_ID_INT)
+    if channel:
+        await channel.send(text)
+
+
+def build_race_rules_embed():
+    embed = discord.Embed(
+        title="🏁 12 O'Clock Boyz — Official Race Rules",
+        description=(
+            "These rules apply to all official MX Bikes events, race nights, "
+            "championship rounds, and league sessions."
+        ),
+        color=discord.Color.gold()
+    )
+    embed.add_field(
+        name="🏍 Clean Racing",
+        value=(
+            "• Race hard but fair\n"
+            "• No intentional crashing\n"
+            "• No dirty riding\n"
+            "• Leave racing room when battling"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🚫 Not Allowed",
+        value=(
+            "• Intentional takeouts\n"
+            "• Brake checking\n"
+            "• Blocking on purpose\n"
+            "• Track cutting for advantage\n"
+            "• Unsportsmanlike behaviour"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🎮 Race Requirements",
+        value=(
+            "• Use your registered MX Bikes rider name\n"
+            "• Join the correct event and class\n"
+            "• Follow Race Director instructions"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="⚖️ Penalties",
+        value=(
+            "Breaking race rules may result in:\n"
+            "• Warning\n"
+            "• Position penalty\n"
+            "• Points deduction\n"
+            "• Disqualification"
+        ),
+        inline=False
+    )
+    embed.set_footer(text="12 O'Clock Boyz MX Bikes League")
+    return embed
+
+
+def build_server_rules_embed():
+    embed = discord.Embed(
+        title="💬 12 O'Clock Boyz — Official Server Rules",
+        description=(
+            "Welcome to the 12 O'Clock Boyz Discord.\n"
+            "Respect the community, follow staff directions, and keep the server positive."
+        ),
+        color=discord.Color.blurple()
+    )
+    embed.add_field(
+        name="✅ Community Rules",
+        value=(
+            "• Respect everyone\n"
+            "• No harassment or hate speech\n"
+            "• No excessive toxicity\n"
+            "• No spam\n"
+            "• Use the correct channels"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🚫 Not Allowed",
+        value=(
+            "• Racism or discrimination\n"
+            "• Personal attacks\n"
+            "• Unauthorized advertising\n"
+            "• Starting drama in chat\n"
+            "• Staff disrespect"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="⚖️ Staff & Enforcement",
+        value=(
+            "• Follow Admin and Race Director instructions\n"
+            "• Staff decisions are final\n"
+            "• Breaking rules can lead to warnings, mutes, kicks, or bans"
+        ),
+        inline=False
+    )
+    embed.set_footer(text="12 O'Clock Boyz Discord")
+    return embed
+
+
+async def replace_persistent_rules_message(channel_id: int, state_key: str, embed: discord.Embed):
+    if not channel_id:
+        return
+
+    channel = await get_channel_safe(channel_id)
     if channel is None:
+        return
+
+    old_id = get_bot_state(state_key)
+    if old_id:
         try:
-            channel = await bot.fetch_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID_INT)
+            old_msg = await channel.fetch_message(int(old_id))
+            await old_msg.delete()
         except Exception:
-            return
-    await channel.send(text)
+            pass
+
+    new_msg = await channel.send(embed=embed)
+    set_bot_state(state_key, str(new_msg.id))
 
 
+async def repost_rules_messages():
+    if RULES_CHANNEL_ID_INT:
+        await replace_persistent_rules_message(
+            RULES_CHANNEL_ID_INT,
+            "race_rules_message_id",
+            build_race_rules_embed()
+        )
+
+    if SERVER_RULES_CHANNEL_ID_INT:
+        await replace_persistent_rules_message(
+            SERVER_RULES_CHANNEL_ID_INT,
+            "server_rules_message_id",
+            build_server_rules_embed()
+        )
+
+
+@tasks.loop(hours=24)
+async def auto_rules_repost_loop():
+    await repost_rules_messages()
+
+
+@auto_rules_repost_loop.before_loop
+async def before_auto_rules_repost_loop():
+    await bot.wait_until_ready()
+
+
+# =========================
+# BOT EVENTS
+# =========================
 @bot.event
 async def on_ready():
     init_db()
@@ -164,10 +369,28 @@ async def on_ready():
     print(f"BOT ONLINE: {bot.user}")
     print(f"Synced {len(synced)} commands")
 
+    if not auto_rules_repost_loop.is_running():
+        auto_rules_repost_loop.start()
 
+    await repost_rules_messages()
+
+
+# =========================
+# COMMANDS
+# =========================
 @bot.tree.command(name="ping", description="Check bot status", guild=GUILD_OBJ)
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("Pong. Bot online.", ephemeral=True)
+
+
+@bot.tree.command(name="post_all_rules", description="Post fresh race rules and server rules now", guild=GUILD_OBJ)
+async def post_all_rules(interaction: discord.Interaction):
+    if not is_race_director(interaction):
+        await interaction.response.send_message("Race Director only.", ephemeral=True)
+        return
+
+    await repost_rules_messages()
+    await interaction.response.send_message("Posted fresh rules in both channels.", ephemeral=True)
 
 
 @bot.tree.command(name="register_mxb", description="Register your MX Bikes info", guild=GUILD_OBJ)
@@ -434,7 +657,5 @@ async def close_event(interaction: discord.Interaction, event_id: int):
 async def main():
     async with bot:
         await bot.start(DISCORD_BOT_TOKEN)
-
-
 if __name__ == "__main__":
     asyncio.run(main())
