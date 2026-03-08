@@ -9,6 +9,9 @@ from discord.ext import commands, tasks
 import psycopg2
 import psycopg2.extras
 
+# =========================
+# ENV VARS
+# =========================
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
@@ -31,12 +34,17 @@ RACE_ANNOUNCEMENTS_CHANNEL_ID_INT = int(RACE_ANNOUNCEMENTS_CHANNEL_ID) if RACE_A
 RULES_CHANNEL_ID_INT = int(RULES_CHANNEL_ID) if RULES_CHANNEL_ID else None
 SERVER_RULES_CHANNEL_ID_INT = int(SERVER_RULES_CHANNEL_ID) if SERVER_RULES_CHANNEL_ID else None
 
+# =========================
+# BOT SETUP
+# =========================
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 GUILD_OBJ = discord.Object(id=GUILD_ID_INT)
+
+_has_synced = False
 
 
 # =========================
@@ -198,6 +206,8 @@ def is_race_director(interaction: discord.Interaction) -> bool:
 
 
 async def get_channel_safe(channel_id: int):
+    if not channel_id:
+        return None
     channel = bot.get_channel(channel_id)
     if channel is None:
         try:
@@ -312,22 +322,31 @@ async def before_auto_rules_repost_loop():
 
 
 # =========================
-# BOT EVENTS
+# EVENTS
 # =========================
 @bot.event
 async def on_ready():
+    global _has_synced
+
+    print(f"BOT ONLINE: {bot.user}")
+
     init_db()
-    try:
-        synced = await bot.tree.sync(guild=GUILD_OBJ)
-        print(f"BOT ONLINE: {bot.user}")
-        print(f"Synced {len(synced)} commands")
-    except Exception as e:
-        print(f"Sync failed: {e}")
+
+    if not _has_synced:
+        try:
+            synced = await bot.tree.sync(guild=GUILD_OBJ)
+            print(f"Synced {len(synced)} commands")
+            _has_synced = True
+        except Exception as e:
+            print(f"Sync failed: {e}")
 
     if not auto_rules_repost_loop.is_running():
         auto_rules_repost_loop.start()
 
-    await repost_rules_messages()
+    try:
+        await repost_rules_messages()
+    except Exception as e:
+        print(f"Rules repost failed: {e}")
 
 
 # =========================
@@ -641,8 +660,13 @@ async def close_event(interaction: discord.Interaction, event_id: int):
     await announce(f"🔒 Event Closed — **{row['name']}**")
 
 
+# =========================
+# MAIN
+# =========================
 async def main():
     async with bot:
         await bot.start(DISCORD_BOT_TOKEN)
+
+
 if __name__ == "__main__":
     asyncio.run(main())
