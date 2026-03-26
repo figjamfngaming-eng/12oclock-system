@@ -1,61 +1,12 @@
 {% extends "base.html" %}
+
 {% block content %}
-<div class="card">
-    <h1 class="title">{{ event.name }}</h1>
-    <p class="sub">{{ event.track }} · {{ event.class_name }} · {{ event.season }} Round {{ event.round_number }}</p>
-</div>
+<h2>Events</h2>
 
-<div class="section grid two">
-    <div class="card">
-        <h2>Registrations</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Rider</th>
-                    <th>Team</th>
-                    <th>Gate</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for r in regs %}
-                <tr>
-                    <td>{{ r.rider_name }}</td>
-                    <td>{{ r.team_name or "Independent" }}</td>
-                    <td>{{ r.gate_pick or "-" }}</td>
-                    <td>{{ r.status }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="4">No registrations yet.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <div class="card">
-        <h2>Results</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Pos</th>
-                    <th>Rider</th>
-                    <th>Team</th>
-                    <th>Points</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for r in results %}
-                <tr>
-                    <td>{{ r.position }}</td>
-                    <td>{{ r.rider_name }}</td>
-                    <td>{{ r.team_name or "Independent" }}</td>
-                    <td>{{ r.points - r.penalty_points }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="4">No results yet.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+{% for e in events %}
+<div>
+    <b>{{ e.name }}</b> - {{ e.track }}
 </div>
+{% endfor %}
+
 {% endblock %}
