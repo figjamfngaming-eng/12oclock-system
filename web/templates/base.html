@@ -2,28 +2,20 @@
 <html>
 <head>
     <title>12 O'Clock Boyz</title>
-    <style>
-        body { background:#0e0e0e; color:white; font-family:Arial; }
-        nav { padding:15px; }
-        .pill {
-            margin-right:10px;
-            padding:10px 15px;
-            background:purple;
-            border-radius:10px;
-            text-decoration:none;
-            color:white;
-        }
-    </style>
 </head>
-<body>
+<body style="background:black; color:white; font-family:sans-serif">
 
-<nav>
-    <a class="pill" href="{{ url_for('home') }}">Home</a>
-    <a class="pill" href="{{ url_for('event_page') }}">Events</a>
-    <a class="pill" href="{{ url_for('schedule_page') }}">Schedule</a>
-</nav>
+    <h1>12 O'Clock Boyz</h1>
 
-{% block content %}{% endblock %}
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/events">Events</a> |
+        <a href="/schedule">Schedule</a>
+    </nav>
+
+    <hr>
+
+    {% block content %}{% endblock %}
 
 </body>
 </html>
