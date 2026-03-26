@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="title">Event #{{ event.id }} — {{ event.name }}</div>
+    <div class="pill">Track: {{ event.track }}</div>
+    <div class="pill">Type: {{ event.event_type }}</div>
+    <div class="pill">Status: {{ event.status }}</div>
+    <div class="pill">GUID Lock: {{ "Yes" if event.requires_guid else "No" }}</div>
+</div>
+
+<div class="card">
+    <div class="title">Results</div>
+    {% if results %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Position</th>
+                    <th>Rider</th>
+                    <th>Points</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in results %}
+                <tr>
+                    <td>{{ row.position }}</td>
+                    <td>{{ row.mxb_name or "Unknown" }}</td>
+                    <td>{{ row.points }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="muted">No results saved yet.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="title">Registered Riders</div>
+    {% if registrations %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Rider</th>
+                    <th>Class</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rider in registrations %}
+                <tr>
+                    <td>{{ rider.mxb_name or "Unknown" }}</td>
+                    <td>{{ rider.class_name or "Open" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="muted">No registered riders for this event.</p>
+    {% endif %}
+</div>
+{% endblock %}
