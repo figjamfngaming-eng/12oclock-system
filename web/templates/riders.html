@@ -2,32 +2,46 @@
 
 {% block content %}
 <div class="card">
-    <h1 class="title">Registered Riders</h1>
-    <p class="sub">All riders currently registered in the league system.</p>
+    <h2>Riders</h2>
 
     {% if riders %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Discord</th>
-                    <th>MX Bikes Name</th>
-                    <th>Steam</th>
-                    <th>Joined</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for r in riders %}
-                <tr>
-                    <td>{{ r.discord_name or "" }}</td>
-                    <td>{{ r.mxb_name or "" }}</td>
-                    <td>{{ r.steam_id or "" }}</td>
-                    <td>{{ r.created_at }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <table>
+        <thead>
+            <tr>
+                <th>MXB Name</th>
+                <th>Discord</th>
+                <th>Steam ID</th>
+                <th>Class</th>
+                <th>Team</th>
+                <th>No.</th>
+                <th>GUID Status</th>
+                <th>Profile</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rider in riders %}
+            <tr>
+                <td>{{ rider.mxb_name or "-" }}</td>
+                <td>{{ rider.discord_name or rider.discord_id }}</td>
+                <td>{{ rider.steam_id or "-" }}</td>
+                <td>{{ rider.class_name or "-" }}</td>
+                <td>{{ rider.team_name or "-" }}</td>
+                <td>{{ rider.rider_number or "-" }}</td>
+                <td>
+                    {% set status = rider.guid_status or 'pending' %}
+                    <span class="badge {% if status == 'approved' %}approved{% elif status == 'pending' %}pending{% else %}rejected{% endif %}">
+                        {{ status }}
+                    </span>
+                </td>
+                <td>
+                    <a class="link" href="/profile/{{ rider.discord_id }}">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
     {% else %}
-        <p class="muted">No riders registered yet.</p>
+    <p>No riders registered yet.</p>
     {% endif %}
 </div>
 {% endblock %}
