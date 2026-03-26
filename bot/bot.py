@@ -1,4 +1,6 @@
 import os
+import random
+import string
 import traceback
 import discord
 from discord.ext import commands
@@ -33,6 +35,22 @@ intents.message_content = True
 
 def get_db():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+
+def make_password(length: int = 8) -> str:
+    chars = string.ascii_uppercase + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
+
+
+def ama_points(position: int) -> int:
+    table = {
+        1: 26, 2: 23, 3: 21, 4: 19, 5: 18,
+        6: 17, 7: 16, 8: 15, 9: 14, 10: 13,
+        11: 12, 12: 11, 13: 10, 14: 9, 15: 8,
+        16: 7, 17: 6, 18: 5, 19: 4, 20: 3,
+        21: 2, 22: 1
+    }
+    return table.get(position, 0)
 
 
 def init_db():
@@ -77,6 +95,28 @@ def init_db():
                     UNIQUE(event_id, rider_id)
                 );
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS event_passwords (
+                    id SERIAL PRIMARY KEY,
+                    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                    race_password TEXT NOT NULL,
+                    created_by TEXT,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(event_id)
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS results (
+                    id SERIAL PRIMARY KEY,
+                    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                    rider_id INTEGER NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL,
+                    points INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(event_id, rider_id),
+                    UNIQUE(event_id, position)
+                );
+            """)
 
             # Safe upgrades for old tables
             cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS discord_name TEXT;")
@@ -110,13 +150,6 @@ def is_staff(member: discord.Member) -> bool:
     if ADMIN_ROLE_IDS and any(str(r.id) in ADMIN_ROLE_IDS for r in member.roles):
         return True
     return False
-
-
-async def safe_followup(interaction: discord.Interaction, message: str, ephemeral: bool = True):
-    if interaction.response.is_done():
-        await interaction.followup.send(message, ephemeral=ephemeral)
-    else:
-        await interaction.response.send_message(message, ephemeral=ephemeral)
 
 
 class LeagueBot(commands.Bot):
@@ -358,19 +391,29 @@ class LeagueBot(commands.Bot):
                         event_id = cur.fetchone()[0]
                         conn.commit()
 
-                if RACE_ANNOUNCEMENTS_CHANNEL_ID:
-                    channel = self.get_channel(int(RACE_ANNOUNCEMENTS_CHANNEL_ID))
-                    if channel:
-                        await channel.send(
-                            f"🏁 **New Event Created**\n"
-                            f"**ID:** {event_id}\n"
-                            f"**Name:** {name}\n"
-                            f"**Track:** {track}\n"
-                            f"**Type:** {event_type}\n"
-                            f"**GUID Lock:** {'Yes' if requires_guid else 'No'}"
-                        )
+                announcement_warning = ""
 
-                await interaction.followup.send(f"✅ Event created with ID **{event_id}**.")
+                if RACE_ANNOUNCEMENTS_CHANNEL_ID:
+                    try:
+                        channel = self.get_channel(int(RACE_ANNOUNCEMENTS_CHANNEL_ID))
+                        if channel is None:
+                            announcement_warning = "\n⚠️ Event created, but announcement channel was not found."
+                        else:
+                            await channel.send(
+                                f"🏁 **New Event Created**\n"
+                                f"**ID:** {event_id}\n"
+                                f"**Name:** {name}\n"
+                                f"**Track:** {track}\n"
+                                f"**Type:** {event_type}\n"
+                                f"**GUID Lock:** {'Yes' if requires_guid else 'No'}"
+                            )
+                    except Exception as send_error:
+                        announcement_warning = f"\n⚠️ Event created, but announcement send failed: {send_error}"
+
+                await interaction.followup.send(
+                    f"✅ Event created with ID **{event_id}**.{announcement_warning}",
+                    ephemeral=True
+                )
             except Exception as e:
                 print("create_event error:")
                 traceback.print_exc()
@@ -447,6 +490,213 @@ class LeagueBot(commands.Bot):
                 print("join_race error:")
                 traceback.print_exc()
                 await interaction.followup.send(f"❌ join_race failed: {e}", ephemeral=True)
+
+        @self.tree.command(name="start_race", description="Start a race and DM password to joined riders", guild=GUILD_OBJ)
+        @app_commands.describe(event_id="Event ID")
+        async def start_race(interaction: discord.Interaction, event_id: int):
+            await interaction.response.defer(ephemeral=True)
+            try:
+                if not is_staff(interaction.user):
+                    await interaction.followup.send("❌ No permission.", ephemeral=True)
+                    return
+
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT * FROM events WHERE id = %s", (event_id,))
+                        event = cur.fetchone()
+                        if not event:
+                            await interaction.followup.send("❌ Event not found.", ephemeral=True)
+                            return
+
+                        password = make_password()
+
+                        cur.execute("""
+                            INSERT INTO event_passwords (event_id, race_password, created_by)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (event_id) DO UPDATE SET
+                                race_password = EXCLUDED.race_password,
+                                created_by = EXCLUDED.created_by,
+                                created_at = NOW()
+                        """, (event_id, password, str(interaction.user.id)))
+
+                        cur.execute("""
+                            UPDATE events
+                            SET status = 'started'
+                            WHERE id = %s
+                        """, (event_id,))
+
+                        cur.execute("""
+                            SELECT r.discord_id, r.mxb_name
+                            FROM registrations reg
+                            JOIN riders r ON r.id = reg.rider_id
+                            WHERE reg.event_id = %s
+                        """, (event_id,))
+                        riders = cur.fetchall()
+
+                        conn.commit()
+
+                sent = 0
+                failed = 0
+
+                for rider in riders:
+                    try:
+                        user = await self.fetch_user(int(rider["discord_id"]))
+                        await user.send(
+                            f"🏁 **Race Password for Event #{event_id}**\n"
+                            f"**Event:** {event['name']}\n"
+                            f"**Track:** {event['track']}\n"
+                            f"**Password:** `{password}`"
+                        )
+                        sent += 1
+                    except Exception:
+                        failed += 1
+
+                await interaction.followup.send(
+                    f"✅ Race started for event **#{event_id}**.\n"
+                    f"🔐 Password generated: `{password}`\n"
+                    f"📨 DMs sent: **{sent}**\n"
+                    f"⚠️ DM failed: **{failed}**",
+                    ephemeral=True
+                )
+            except Exception as e:
+                print("start_race error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ start_race failed: {e}", ephemeral=True)
+
+        @self.tree.command(name="set_result", description="Set race result for a rider", guild=GUILD_OBJ)
+        @app_commands.describe(event_id="Event ID", member="Rider", position="Finishing position")
+        async def set_result(interaction: discord.Interaction, event_id: int, member: discord.Member, position: int):
+            await interaction.response.defer(ephemeral=True)
+            try:
+                if not is_staff(interaction.user):
+                    await interaction.followup.send("❌ No permission.", ephemeral=True)
+                    return
+
+                if position < 1:
+                    await interaction.followup.send("❌ Position must be 1 or higher.", ephemeral=True)
+                    return
+
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT * FROM events WHERE id = %s", (event_id,))
+                        event = cur.fetchone()
+                        if not event:
+                            await interaction.followup.send("❌ Event not found.", ephemeral=True)
+                            return
+
+                        cur.execute("SELECT * FROM riders WHERE discord_id = %s", (str(member.id),))
+                        rider = cur.fetchone()
+                        if not rider:
+                            await interaction.followup.send("❌ Rider not registered.", ephemeral=True)
+                            return
+
+                        points = ama_points(position)
+
+                        cur.execute("""
+                            INSERT INTO results (event_id, rider_id, position, points)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (event_id, rider_id) DO UPDATE SET
+                                position = EXCLUDED.position,
+                                points = EXCLUDED.points
+                        """, (event_id, rider["id"], position, points))
+
+                        cur.execute("""
+                            UPDATE events
+                            SET status = 'finished'
+                            WHERE id = %s
+                        """, (event_id,))
+
+                        conn.commit()
+
+                await interaction.followup.send(
+                    f"✅ Result saved.\n"
+                    f"Rider: **{rider['mxb_name'] or member.display_name}**\n"
+                    f"Position: **{position}**\n"
+                    f"Points: **{points}**",
+                    ephemeral=True
+                )
+            except Exception as e:
+                print("set_result error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ set_result failed: {e}", ephemeral=True)
+
+        @self.tree.command(name="event_results", description="Show results for an event", guild=GUILD_OBJ)
+        @app_commands.describe(event_id="Event ID")
+        async def event_results(interaction: discord.Interaction, event_id: int):
+            await interaction.response.defer(ephemeral=True)
+            try:
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT * FROM events WHERE id = %s", (event_id,))
+                        event = cur.fetchone()
+                        if not event:
+                            await interaction.followup.send("❌ Event not found.", ephemeral=True)
+                            return
+
+                        cur.execute("""
+                            SELECT
+                                r.mxb_name,
+                                res.position,
+                                res.points
+                            FROM results res
+                            JOIN riders r ON r.id = res.rider_id
+                            WHERE res.event_id = %s
+                            ORDER BY res.position ASC
+                        """, (event_id,))
+                        rows = cur.fetchall()
+
+                if not rows:
+                    await interaction.followup.send("No results saved for this event yet.", ephemeral=True)
+                    return
+
+                lines = [
+                    f"{row['position']}. **{row['mxb_name'] or 'Unknown'}** — {row['points']} pts"
+                    for row in rows
+                ]
+
+                await interaction.followup.send(
+                    f"🏁 **Results for Event #{event_id} — {event['name']}**\n" + "\n".join(lines),
+                    ephemeral=True
+                )
+            except Exception as e:
+                print("event_results error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ event_results failed: {e}", ephemeral=True)
+
+        @self.tree.command(name="leaderboard", description="Show current leaderboard", guild=GUILD_OBJ)
+        async def leaderboard(interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)
+            try:
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("""
+                            SELECT
+                                r.mxb_name,
+                                r.class_name,
+                                SUM(res.points) AS total_points
+                            FROM results res
+                            JOIN riders r ON r.id = res.rider_id
+                            GROUP BY r.mxb_name, r.class_name
+                            ORDER BY total_points DESC, r.mxb_name ASC
+                            LIMIT 20
+                        """)
+                        rows = cur.fetchall()
+
+                if not rows:
+                    await interaction.followup.send("No leaderboard data yet.", ephemeral=True)
+                    return
+
+                lines = []
+                for i, row in enumerate(rows, start=1):
+                    lines.append(
+                        f"{i}. **{row['mxb_name'] or 'Unknown'}** | Class: {row['class_name'] or 'Open'} | Points: {row['total_points']}"
+                    )
+
+                await interaction.followup.send("🏆 **Leaderboard**\n" + "\n".join(lines), ephemeral=True)
+            except Exception as e:
+                print("leaderboard error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ leaderboard failed: {e}", ephemeral=True)
 
         try:
             synced = await self.tree.sync(guild=GUILD_OBJ)
