@@ -1,27 +1,34 @@
-import os
 from flask import Flask, render_template
-from shared.db import query
+import os
+import psycopg2
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev")
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_db():
+    return psycopg2.connect(DATABASE_URL)
 
 @app.route("/")
-def home():
+def index():
     return render_template("index.html")
 
 @app.route("/events")
 def event_page():
-    events = query("SELECT * FROM events ORDER BY id DESC")
-    return render_template("event.html", events=events)
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT name, track FROM events ORDER BY id DESC")
+    events = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return render_template("events.html", events=events)
 
 @app.route("/schedule")
 def schedule_page():
-    return render_template("event.html")
-
-@app.route("/health")
-def health():
-    return "OK", 200
+    return render_template("schedule.html")
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run()
