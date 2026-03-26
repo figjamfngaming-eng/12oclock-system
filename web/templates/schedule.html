@@ -1,35 +1,6 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
-    <h1 class="title">Schedule</h1>
-    <p class="sub">Season {{ season }}</p>
-
-    {% if schedule %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Round</th>
-                    <th>Event</th>
-                    <th>Track</th>
-                    <th>Class</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for e in schedule %}
-                <tr>
-                    <td>{{ e.round_number }}</td>
-                    <td><a href="{{ url_for('event_page', event_id=e.id) }}">{{ e.name }}</a></td>
-                    <td>{{ e.track }}</td>
-                    <td>{{ e.class_name }}</td>
-                    <td>{{ e.status }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <p class="muted">No schedule available yet.</p>
-    {% endif %}
-</div>
+<h2>Schedule</h2>
+<p>Race schedule coming soon</p>
 {% endblock %}
