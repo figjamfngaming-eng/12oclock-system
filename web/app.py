@@ -6,92 +6,98 @@ from psycopg2.extras import RealDictCursor
 app = Flask(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing")
+
 
 def get_db():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
+
 @app.route("/")
-def index():
-    rider_count = 0
-    event_count = 0
-
+def home():
     with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM riders")
-            rider_count = cur.fetchone()[0]
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM riders")
+            rider_count = cur.fetchone()["count"]
 
-            cur.execute("SELECT COUNT(*) FROM events")
-            event_count = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) AS count FROM events")
+            event_count = cur.fetchone()["count"]
+
+            cur.execute("""
+                SELECT id, name, track, event_type, status
+                FROM events
+                ORDER BY id DESC
+                LIMIT 5
+            """)
+            recent_events = cur.fetchall()
 
     return render_template(
         "index.html",
         rider_count=rider_count,
-        event_count=event_count
+        event_count=event_count,
+        recent_events=recent_events
     )
 
-@app.route("/riders")
-def riders():
-    with get_db() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT
-                    discord_id,
-                    discord_name,
-                    mxb_name,
-                    steam_id,
-                    guid_status,
-                    class_name,
-                    team_name,
-                    rider_number,
-                    approved
-                FROM riders
-                ORDER BY COALESCE(mxb_name, discord_name) ASC
-            """)
-            rows = cur.fetchall()
-
-    return render_template("riders.html", riders=rows)
 
 @app.route("/events")
-def events():
+def events_page():
     with get_db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT
-                    id,
-                    name,
-                    track,
-                    class_name,
-                    season,
-                    round_number,
-                    status,
-                    event_type,
-                    requires_guid,
-                    created_at
+                SELECT id, name, track, class_name, season, round_number,
+                       status, event_type, requires_guid, race_password,
+                       started_at, ended_at, created_at
                 FROM events
                 ORDER BY id DESC
             """)
-            rows = cur.fetchall()
+            events = cur.fetchall()
 
-    return render_template("events.html", events=rows)
+    return render_template("events.html", events=events)
 
-@app.route("/events/<int:event_id>")
-def event_detail(event_id: int):
+
+@app.route("/riders")
+def riders_page():
+    with get_db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mxb_name, steam_id, guid, guid_status, team_name,
+                       rider_number, class_name, approved, suspended, suspension_reason
+                FROM riders
+                ORDER BY mxb_name ASC NULLS LAST
+            """)
+            riders = cur.fetchall()
+
+    return render_template("riders.html", riders=riders)
+
+
+@app.route("/leaderboard")
+def leaderboard_page():
     with get_db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT
-                    id,
-                    name,
-                    track,
-                    class_name,
-                    season,
-                    round_number,
-                    status,
-                    event_type,
-                    requires_guid,
-                    created_at
+                    r.mxb_name,
+                    r.class_name,
+                    COALESCE(SUM(res.points), 0) AS total_points
+                FROM riders r
+                LEFT JOIN results res ON r.id = res.rider_id
+                GROUP BY r.id, r.mxb_name, r.class_name
+                ORDER BY total_points DESC, r.mxb_name ASC
+                LIMIT 100
+            """)
+            rows = cur.fetchall()
+
+    return render_template("leaderboard.html", rows=rows)
+
+
+@app.route("/event/<int:event_id>")
+def event_results_page(event_id: int):
+    with get_db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT *
                 FROM events
                 WHERE id = %s
             """, (event_id,))
@@ -103,56 +109,56 @@ def event_detail(event_id: int):
             cur.execute("""
                 SELECT
                     r.mxb_name,
-                    r.discord_name,
-                    r.class_name,
-                    r.team_name,
-                    r.rider_number,
-                    r.guid_status,
-                    reg.created_at
+                    res.position,
+                    res.points
+                FROM results res
+                JOIN riders r ON r.id = res.rider_id
+                WHERE res.event_id = %s
+                ORDER BY res.position ASC
+            """, (event_id,))
+            results = cur.fetchall()
+
+            cur.execute("""
+                SELECT
+                    r.mxb_name,
+                    r.class_name
                 FROM registrations reg
                 JOIN riders r ON r.id = reg.rider_id
                 WHERE reg.event_id = %s
-                ORDER BY COALESCE(r.mxb_name, r.discord_name) ASC
+                ORDER BY r.mxb_name ASC
             """, (event_id,))
             registrations = cur.fetchall()
 
     return render_template(
-        "event_detail.html",
+        "event_results.html",
         event=event,
+        results=results,
         registrations=registrations
     )
 
-@app.route("/profile/<discord_id>")
-def profile(discord_id: str):
+
+@app.route("/race/<int:event_id>")
+def race_info_page(event_id: int):
     with get_db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT
-                    discord_id,
-                    discord_name,
-                    mxb_name,
-                    steam_id,
-                    guid,
-                    guid_status,
-                    class_name,
-                    team_name,
-                    rider_number,
-                    approved,
-                    created_at
-                FROM riders
-                WHERE discord_id = %s
-            """, (discord_id,))
-            rider = cur.fetchone()
+                SELECT id, name, track, status, event_type, requires_guid,
+                       race_password, started_at, ended_at, class_name, season, round_number
+                FROM events
+                WHERE id = %s
+            """, (event_id,))
+            event = cur.fetchone()
 
-            if not rider:
+            if not event:
                 abort(404)
 
-    return render_template("profile.html", rider=rider)
+    return render_template("race_info.html", event=event)
 
-@app.route("/health")
-def health():
-    return "OK", 200
+
+@app.route("/status")
+def status():
+    return {"status": "ok", "system": "12 O'Clock Boyz website live"}
+
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=10000)
