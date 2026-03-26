@@ -1,6 +1,21 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>Welcome</h2>
-<p>League system is live 🔥</p>
+<div class="grid">
+    <div class="card">
+        <div class="muted">Registered Riders</div>
+        <div class="stat">{{ rider_count }}</div>
+    </div>
+
+    <div class="card">
+        <div class="muted">Events Created</div>
+        <div class="stat">{{ event_count }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>System Status</h2>
+    <p>This website is connected to the same database as your Discord bot.</p>
+    <p class="muted">Use the bot to register riders and create events, then view them here.</p>
+</div>
 {% endblock %}
