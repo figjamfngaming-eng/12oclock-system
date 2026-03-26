@@ -1,7 +1,3 @@
 flask
-gunicorn
 psycopg2-binary
-sqlalchemy
-discord.py
-python-dotenv
-requests
+gunicorn
