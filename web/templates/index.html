@@ -1,24 +1,29 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
-    <div class="title">Welcome</div>
-    <p class="muted">12 O'Clock Boyz league system is live.</p>
+<div class="hero">
+    <h2>League Control Center</h2>
+    <p>
+        Practice. Qualifiers. Finals. Track your riders, events, results, and standings
+        all in one place for your 12 O'Clock Boyz MX Bikes league.
+    </p>
 </div>
 
 <div class="grid">
     <div class="card">
-        <div class="muted">Registered Riders</div>
-        <div class="big">{{ rider_count }}</div>
+        <div class="subtle">Registered Riders</div>
+        <div class="big-stat">{{ rider_count }}</div>
     </div>
+
     <div class="card">
-        <div class="muted">Total Events</div>
-        <div class="big">{{ event_count }}</div>
+        <div class="subtle">Total Events</div>
+        <div class="big-stat">{{ event_count }}</div>
     </div>
 </div>
 
 <div class="card">
     <div class="title">Recent Events</div>
+
     {% if recent_events %}
         <table>
             <thead>
@@ -43,7 +48,7 @@
             </tbody>
         </table>
     {% else %}
-        <p class="muted">No events yet.</p>
+        <div class="subtle">No events yet.</div>
     {% endif %}
 </div>
 {% endblock %}
