@@ -6,10 +6,11 @@
     <title>12 O'Clock Boyz</title>
     <style>
         body {
-            margin: 0;
-            font-family: Arial, sans-serif;
             background: #0b0b0f;
             color: #f5f5f5;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
         }
 
         .wrap {
@@ -20,118 +21,100 @@
 
         .topbar {
             background: #11111a;
-            border-bottom: 1px solid #2b2b3c;
+            border-bottom: 1px solid #2d2140;
+            padding: 16px 24px;
         }
 
         .brand {
-            font-size: 30px;
+            font-size: 28px;
             font-weight: 700;
-            margin: 0;
-            color: #ffd54a;
-        }
-
-        .sub {
-            color: #b8b8c7;
-            margin-top: 6px;
+            color: #f7d774;
         }
 
         .nav {
-            margin-top: 18px;
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
+            margin-top: 10px;
         }
 
         .nav a {
-            color: #fff;
-            background: #6f2cff;
+            color: #c59cff;
             text-decoration: none;
-            padding: 10px 14px;
-            border-radius: 10px;
-            font-weight: 700;
-        }
-
-        .nav a:hover {
-            opacity: 0.9;
+            margin-right: 16px;
+            font-weight: 600;
         }
 
         .card {
-            background: #151522;
-            border: 1px solid #2f2f45;
-            border-radius: 16px;
+            background: #141421;
+            border: 1px solid #2d2140;
+            border-radius: 14px;
             padding: 18px;
-            margin-top: 18px;
+            margin-bottom: 18px;
         }
 
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 16px;
-        }
-
-        .stat {
-            font-size: 34px;
+        .title {
+            font-size: 24px;
             font-weight: 700;
-            color: #ffd54a;
+            margin-bottom: 16px;
         }
 
         .muted {
-            color: #b8b8c7;
+            color: #bbbbc7;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 14px;
+            margin-top: 12px;
         }
 
         th, td {
-            border-bottom: 1px solid #2f2f45;
-            padding: 12px 8px;
             text-align: left;
-            vertical-align: top;
+            padding: 12px;
+            border-bottom: 1px solid #2b2b38;
         }
 
         th {
-            color: #ffd54a;
+            color: #f7d774;
         }
 
-        .badge {
+        .pill {
             display: inline-block;
             padding: 5px 10px;
             border-radius: 999px;
+            background: #241a35;
+            color: #e3c9ff;
             font-size: 12px;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+        }
+
+        .big {
+            font-size: 34px;
             font-weight: 700;
-            background: #24243a;
-            color: #fff;
+            color: #f7d774;
         }
 
-        .approved {
-            background: #155724;
-        }
-
-        .pending {
-            background: #6c5a12;
-        }
-
-        .rejected {
-            background: #6b1c1c;
-        }
-
-        .link {
-            color: #8ecbff;
+        a.inline-link {
+            color: #8cc8ff;
+            text-decoration: none;
         }
     </style>
 </head>
 <body>
     <div class="topbar">
         <div class="wrap">
-            <h1 class="brand">12 O'Clock Boyz</h1>
-            <div class="sub">MX Bikes League System</div>
+            <div class="brand">12 O'Clock Boyz</div>
             <div class="nav">
                 <a href="/">Home</a>
-                <a href="/riders">Riders</a>
                 <a href="/events">Events</a>
+                <a href="/riders">Riders</a>
+                <a href="/leaderboard">Leaderboard</a>
+                <a href="/status">Status</a>
             </div>
         </div>
     </div>
