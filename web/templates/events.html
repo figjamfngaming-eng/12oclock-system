@@ -1,10 +1,38 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>Events</h2>
+<div class="card">
+    <h2>Events</h2>
 
-{% for e in events %}
-    <p>{{ e[0] }} - {{ e[1] }}</p>
-{% endfor %}
-
+    {% if events %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Track</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>GUID Lock</th>
+                <th>View</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for event in events %}
+            <tr>
+                <td>#{{ event.id }}</td>
+                <td>{{ event.name }}</td>
+                <td>{{ event.track }}</td>
+                <td>{{ event.event_type }}</td>
+                <td>{{ event.status }}</td>
+                <td>{{ "Yes" if event.requires_guid else "No" }}</td>
+                <td><a class="link" href="/events/{{ event.id }}">Open</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No events created yet.</p>
+    {% endif %}
+</div>
 {% endblock %}
