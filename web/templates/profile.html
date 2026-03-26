@@ -2,29 +2,19 @@
 {% block content %}
 <div class="card">
     <h1 class="title">My Rider Profile</h1>
-    <p class="sub">Set your race identity for website + Discord registration.</p>
+    <p class="sub">GUID is required for qualifiers and finals.</p>
+    {% if message %}<div class="flash">{{ message }}</div>{% endif %}
 
     <form method="post">
-        <div>
-            <label>Discord Name</label>
-            <input type="text" value="{{ profile.discord_name }}" disabled>
-        </div>
-        <div>
-            <label>MX Bikes Name</label>
-            <input type="text" name="mxb_name" value="{{ profile.mxb_name or '' }}">
-        </div>
-        <div>
-            <label>Steam ID</label>
-            <input type="text" name="steam_id" value="{{ profile.steam_id or '' }}">
-        </div>
-        <div>
-            <label>Team Name</label>
-            <input type="text" name="team_name" value="{{ profile.team_name or '' }}">
-        </div>
-        <div>
-            <label>Rider Number</label>
-            <input type="text" name="rider_number" value="{{ profile.rider_number or '' }}">
-        </div>
+        <div><label>Discord Name</label><input type="text" value="{{ profile.discord_name }}" disabled></div>
+        <div><label>MX Bikes Name</label><input type="text" name="mxb_name" value="{{ profile.mxb_name or '' }}" required></div>
+        <div><label>Steam ID</label><input type="text" name="steam_id" value="{{ profile.steam_id or '' }}"></div>
+        <div><label>GUID</label><input type="text" name="guid" value="{{ profile.guid or '' }}" required></div>
+        <div><label>GUID Status</label><input type="text" value="{{ profile.guid_status or 'missing' }}" disabled></div>
+        <div><label>GUID Note</label><input type="text" value="{{ profile.guid_note or '' }}" disabled></div>
+        <div><label>Team Name</label><input type="text" name="team_name" value="{{ profile.team_name or '' }}"></div>
+        <div><label>Rider Number</label><input type="text" name="rider_number" value="{{ profile.rider_number or '' }}"></div>
+        <div><label>Class</label><select name="rider_class"><option value="450" {% if profile.rider_class=='450' %}selected{% endif %}>450</option><option value="250" {% if profile.rider_class=='250' %}selected{% endif %}>250</option></select></div>
         <button class="btn primary" type="submit">Save Profile</button>
     </form>
 </div>
