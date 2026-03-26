@@ -1,21 +1,49 @@
 {% extends "base.html" %}
 
 {% block content %}
+<div class="card">
+    <div class="title">Welcome</div>
+    <p class="muted">12 O'Clock Boyz league system is live.</p>
+</div>
+
 <div class="grid">
     <div class="card">
         <div class="muted">Registered Riders</div>
-        <div class="stat">{{ rider_count }}</div>
+        <div class="big">{{ rider_count }}</div>
     </div>
-
     <div class="card">
-        <div class="muted">Events Created</div>
-        <div class="stat">{{ event_count }}</div>
+        <div class="muted">Total Events</div>
+        <div class="big">{{ event_count }}</div>
     </div>
 </div>
 
 <div class="card">
-    <h2>System Status</h2>
-    <p>This website is connected to the same database as your Discord bot.</p>
-    <p class="muted">Use the bot to register riders and create events, then view them here.</p>
+    <div class="title">Recent Events</div>
+    {% if recent_events %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Track</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in recent_events %}
+                <tr>
+                    <td><a class="inline-link" href="/event/{{ event.id }}">#{{ event.id }}</a></td>
+                    <td>{{ event.name }}</td>
+                    <td>{{ event.track }}</td>
+                    <td>{{ event.event_type }}</td>
+                    <td>{{ event.status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="muted">No events yet.</p>
+    {% endif %}
 </div>
 {% endblock %}
