@@ -25,15 +25,27 @@
                     <td>{{ rider.mxb_name or "-" }}</td>
                     <td>{{ rider.steam_id or "-" }}</td>
                     <td>{{ rider.guid or "-" }}</td>
-                    <td>{{ rider.guid_status or "-" }}</td>
+                    <td>
+                        {% if rider.guid_status == "approved" %}
+                            <span class="pill good">approved</span>
+                        {% elif rider.guid_status == "rejected" or rider.guid_status == "mismatch" %}
+                            <span class="pill bad">{{ rider.guid_status }}</span>
+                        {% else %}
+                            <span class="pill">{{ rider.guid_status or "pending" }}</span>
+                        {% endif %}
+                    </td>
                     <td>{{ rider.team_name or "-" }}</td>
                     <td>{{ rider.rider_number or "-" }}</td>
                     <td>{{ rider.class_name or "Open" }}</td>
                     <td>{{ rider.approved }}</td>
                     <td>
-                        {{ rider.suspended }}
-                        {% if rider.suspended and rider.suspension_reason %}
-                            <br><span class="muted">{{ rider.suspension_reason }}</span>
+                        {% if rider.suspended %}
+                            <span class="pill bad">Suspended</span>
+                            {% if rider.suspension_reason %}
+                                <div class="subtle">{{ rider.suspension_reason }}</div>
+                            {% endif %}
+                        {% else %}
+                            <span class="pill good">Active</span>
                         {% endif %}
                     </td>
                 </tr>
@@ -41,7 +53,7 @@
             </tbody>
         </table>
     {% else %}
-        <p class="muted">No riders found.</p>
+        <div class="subtle">No riders found.</div>
     {% endif %}
 </div>
 {% endblock %}
