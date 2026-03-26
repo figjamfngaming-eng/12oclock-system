@@ -2,46 +2,46 @@
 
 {% block content %}
 <div class="card">
-    <h2>Riders</h2>
+    <div class="title">Riders</div>
 
     {% if riders %}
-    <table>
-        <thead>
-            <tr>
-                <th>MXB Name</th>
-                <th>Discord</th>
-                <th>Steam ID</th>
-                <th>Class</th>
-                <th>Team</th>
-                <th>No.</th>
-                <th>GUID Status</th>
-                <th>Profile</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for rider in riders %}
-            <tr>
-                <td>{{ rider.mxb_name or "-" }}</td>
-                <td>{{ rider.discord_name or rider.discord_id }}</td>
-                <td>{{ rider.steam_id or "-" }}</td>
-                <td>{{ rider.class_name or "-" }}</td>
-                <td>{{ rider.team_name or "-" }}</td>
-                <td>{{ rider.rider_number or "-" }}</td>
-                <td>
-                    {% set status = rider.guid_status or 'pending' %}
-                    <span class="badge {% if status == 'approved' %}approved{% elif status == 'pending' %}pending{% else %}rejected{% endif %}">
-                        {{ status }}
-                    </span>
-                </td>
-                <td>
-                    <a class="link" href="/profile/{{ rider.discord_id }}">View</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Steam ID</th>
+                    <th>GUID</th>
+                    <th>GUID Status</th>
+                    <th>Team</th>
+                    <th>#</th>
+                    <th>Class</th>
+                    <th>Approved</th>
+                    <th>Suspended</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rider in riders %}
+                <tr>
+                    <td>{{ rider.mxb_name or "-" }}</td>
+                    <td>{{ rider.steam_id or "-" }}</td>
+                    <td>{{ rider.guid or "-" }}</td>
+                    <td>{{ rider.guid_status or "-" }}</td>
+                    <td>{{ rider.team_name or "-" }}</td>
+                    <td>{{ rider.rider_number or "-" }}</td>
+                    <td>{{ rider.class_name or "Open" }}</td>
+                    <td>{{ rider.approved }}</td>
+                    <td>
+                        {{ rider.suspended }}
+                        {% if rider.suspended and rider.suspension_reason %}
+                            <br><span class="muted">{{ rider.suspension_reason }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     {% else %}
-    <p>No riders registered yet.</p>
+        <p class="muted">No riders found.</p>
     {% endif %}
 </div>
 {% endblock %}
