@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h1 class="title">Admin Panel V2</h1>
-    <p class="sub">Manage events, gate picks, and protests.</p>
+    <h1 class="title">Admin Panel V3 — GUID Control</h1>
+    <p class="sub">Create events, approve GUIDs, and set fastest-lap gate order.</p>
     {% if message %}<div class="flash">{{ message }}</div>{% endif %}
 </div>
 
@@ -13,14 +13,8 @@
             <input type="hidden" name="action" value="create_event">
             <div><label>Event Name</label><input type="text" name="name" required></div>
             <div><label>Track</label><input type="text" name="track" required></div>
-            <div>
-                <label>Class</label>
-                <select name="class_name" required>
-                    <option value="450">450</option>
-                    <option value="250">250</option>
-                    <option value="Open">Open</option>
-                </select>
-            </div>
+            <div><label>Class</label><select name="class_name"><option>450</option><option>250</option><option>Open</option></select></div>
+            <div><label>Event Type</label><select name="event_type"><option value="practice">Practice</option><option value="qualifier">Qualifier</option><option value="finals">Finals</option></select></div>
             <div><label>Season</label><input type="text" name="season" value="{{ default_season }}" required></div>
             <div><label>Round</label><input type="number" name="round_number" value="1" min="1" required></div>
             <button class="btn primary" type="submit">Create Event</button>
@@ -28,63 +22,51 @@
     </div>
 
     <div class="card">
-        <h2>Event Controls</h2>
+        <h2>Fastest-Lap Gate Order</h2>
         <form method="post">
-            <input type="hidden" name="action" value="close_event">
+            <input type="hidden" name="action" value="draw_gates_fastest_lap">
             <div>
-                <label>Close Event</label>
+                <label>Event</label>
                 <select name="event_id" required>
-                    {% for e in events %}
-                    <option value="{{ e.id }}">ID {{ e.id }} — {{ e.name }} — {{ e.status }}</option>
-                    {% endfor %}
+                    {% for e in events %}<option value="{{ e.id }}">#{{ e.id }} — {{ e.name }} — {{ e.event_type }}</option>{% endfor %}
                 </select>
             </div>
-            <button class="btn primary" type="submit">Close Event</button>
+            <button class="btn primary" type="submit">Apply Fastest-Lap Gate Picks</button>
         </form>
-        <hr style="margin:18px 0;border-color:rgba(255,255,255,.08);">
-        <form method="post">
-            <input type="hidden" name="action" value="draw_gates">
-            <div>
-                <label>Randomize Gate Picks</label>
-                <select name="event_id" required>
-                    {% for e in events %}
-                    <option value="{{ e.id }}">ID {{ e.id }} — {{ e.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button class="btn primary" type="submit">Draw Gates</button>
-        </form>
+        <p class="sub" style="margin-top:12px;">For qualifiers and finals, fastest lap gets first gate pick.</p>
     </div>
 </div>
 
 <div class="section">
     <div class="card">
-        <h2>Resolve Protests</h2>
-        <form method="post">
-            <input type="hidden" name="action" value="resolve_protest">
-            <div>
-                <label>Protest</label>
-                <select name="protest_id" required>
-                    {% for p in protests %}
-                    <option value="{{ p.id }}">#{{ p.id }} — {{ p.rider_name }} vs {{ p.against_rider }} — {{ p.status }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>Status</label>
-                <select name="status" required>
-                    <option value="open">Open</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
-                    <option value="reviewed">Reviewed</option>
-                </select>
-            </div>
-            <div>
-                <label>Admin Note</label>
-                <textarea name="admin_note"></textarea>
-            </div>
-            <button class="btn primary" type="submit">Update Protest</button>
-        </form>
+        <h2>GUID Review</h2>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead><tr><th align="left">Discord</th><th align="left">MXB Name</th><th align="left">GUID</th><th align="left">Status</th><th align="left">Update</th></tr></thead>
+            <tbody>
+                {% for r in riders %}
+                <tr>
+                    <td>{{ r.discord_name }}</td>
+                    <td>{{ r.mxb_name or '-' }}</td>
+                    <td><code>{{ r.guid or 'missing' }}</code></td>
+                    <td>{{ r.guid_status or 'pending' }}</td>
+                    <td>
+                        <form method="post" style="display:flex;gap:8px;align-items:center;">
+                            <input type="hidden" name="action" value="set_guid_status">
+                            <input type="hidden" name="discord_id" value="{{ r.discord_id }}">
+                            <select name="guid_status">
+                                <option value="approved">approved</option>
+                                <option value="mismatch">mismatch</option>
+                                <option value="rejected">rejected</option>
+                                <option value="pending">pending</option>
+                            </select>
+                            <input type="text" name="guid_note" placeholder="reason / note">
+                            <button class="btn primary" type="submit">Save</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}
