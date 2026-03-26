@@ -1,4 +1,5 @@
 import os
+import traceback
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -57,7 +58,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS events (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL,
-                    track TEXT NOT NULL,
+                    track TEXT NOT NULL DEFAULT 'TBD',
                     class_name TEXT DEFAULT 'Open',
                     season TEXT DEFAULT 'S1',
                     round_number INTEGER DEFAULT 1,
@@ -76,6 +77,28 @@ def init_db():
                     UNIQUE(event_id, rider_id)
                 );
             """)
+
+            # Safe upgrades for old tables
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS discord_name TEXT;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS mxb_name TEXT;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS steam_id TEXT;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS guid TEXT;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS guid_status TEXT DEFAULT 'pending';")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS team_name TEXT;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS rider_number TEXT;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS class_name TEXT;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS approved BOOLEAN DEFAULT FALSE;")
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();")
+
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS track TEXT DEFAULT 'TBD';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS class_name TEXT DEFAULT 'Open';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'S1';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1;")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT DEFAULT 'practice';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS requires_guid BOOLEAN DEFAULT FALSE;")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();")
+
             conn.commit()
 
 
@@ -89,11 +112,17 @@ def is_staff(member: discord.Member) -> bool:
     return False
 
 
+async def safe_followup(interaction: discord.Interaction, message: str, ephemeral: bool = True):
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=ephemeral)
+    else:
+        await interaction.response.send_message(message, ephemeral=ephemeral)
+
+
 class LeagueBot(commands.Bot):
     async def setup_hook(self) -> None:
         init_db()
 
-        # Clear old cached guild commands
         self.tree.clear_commands(guild=GUILD_OBJ)
 
         @self.tree.command(name="ping", description="Check if the bot is alive", guild=GUILD_OBJ)
@@ -112,154 +141,184 @@ class LeagueBot(commands.Bot):
             steam_id: str,
             guid: str
         ):
-            discord_id = str(interaction.user.id)
-            discord_name = str(interaction.user)
-
-            with get_db() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute(
-                        "SELECT id FROM riders WHERE guid = %s AND discord_id <> %s",
-                        (guid, discord_id)
-                    )
-                    if cur.fetchone():
-                        await interaction.response.send_message(
-                            "❌ That GUID is already linked to another rider.",
-                            ephemeral=True
-                        )
-                        return
-
-                    cur.execute("""
-                        INSERT INTO riders (
-                            discord_id, discord_name, mxb_name, steam_id, guid,
-                            guid_status, approved
-                        )
-                        VALUES (%s,%s,%s,%s,%s,'pending',FALSE)
-                        ON CONFLICT (discord_id) DO UPDATE SET
-                            discord_name = EXCLUDED.discord_name,
-                            mxb_name = EXCLUDED.mxb_name,
-                            steam_id = EXCLUDED.steam_id,
-                            guid = EXCLUDED.guid,
-                            guid_status = 'pending',
-                            approved = FALSE
-                    """, (discord_id, discord_name, mxb_name, steam_id, guid))
-                    conn.commit()
-
+            await interaction.response.defer(ephemeral=True)
             try:
-                if interaction.guild:
-                    me_member = interaction.guild.me
-                    if me_member and me_member.guild_permissions.manage_nicknames:
-                        await interaction.user.edit(nick=mxb_name)
-            except Exception:
-                pass
+                discord_id = str(interaction.user.id)
+                discord_name = str(interaction.user)
 
-            await interaction.response.send_message(
-                f"✅ Registered as **{mxb_name}**.\nGUID is pending approval.",
-                ephemeral=True
-            )
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute(
+                            "SELECT id FROM riders WHERE guid = %s AND discord_id <> %s",
+                            (guid, discord_id)
+                        )
+                        if cur.fetchone():
+                            await interaction.followup.send(
+                                "❌ That GUID is already linked to another rider.",
+                                ephemeral=True
+                            )
+                            return
+
+                        cur.execute("""
+                            INSERT INTO riders (
+                                discord_id, discord_name, mxb_name, steam_id, guid,
+                                guid_status, approved
+                            )
+                            VALUES (%s,%s,%s,%s,%s,'pending',FALSE)
+                            ON CONFLICT (discord_id) DO UPDATE SET
+                                discord_name = EXCLUDED.discord_name,
+                                mxb_name = EXCLUDED.mxb_name,
+                                steam_id = EXCLUDED.steam_id,
+                                guid = EXCLUDED.guid,
+                                guid_status = 'pending',
+                                approved = FALSE
+                        """, (discord_id, discord_name, mxb_name, steam_id, guid))
+                        conn.commit()
+
+                try:
+                    if interaction.guild:
+                        me_member = interaction.guild.me
+                        if me_member and me_member.guild_permissions.manage_nicknames:
+                            await interaction.user.edit(nick=mxb_name)
+                except Exception:
+                    pass
+
+                await interaction.followup.send(
+                    f"✅ Registered as **{mxb_name}**.\nGUID is pending approval.",
+                    ephemeral=True
+                )
+            except Exception as e:
+                print("register_mxb error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ register_mxb failed: {e}", ephemeral=True)
 
         @self.tree.command(name="link_steam", description="Update only your Steam ID", guild=GUILD_OBJ)
         @app_commands.describe(steam_id="Your Steam ID")
         async def link_steam(interaction: discord.Interaction, steam_id: str):
-            with get_db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO riders (discord_id, discord_name, steam_id)
-                        VALUES (%s,%s,%s)
-                        ON CONFLICT (discord_id) DO UPDATE SET
-                            discord_name = EXCLUDED.discord_name,
-                            steam_id = EXCLUDED.steam_id
-                    """, (str(interaction.user.id), str(interaction.user), steam_id))
-                    conn.commit()
+            await interaction.response.defer(ephemeral=True)
+            try:
+                with get_db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO riders (discord_id, discord_name, steam_id)
+                            VALUES (%s,%s,%s)
+                            ON CONFLICT (discord_id) DO UPDATE SET
+                                discord_name = EXCLUDED.discord_name,
+                                steam_id = EXCLUDED.steam_id
+                        """, (str(interaction.user.id), str(interaction.user), steam_id))
+                        conn.commit()
 
-            await interaction.response.send_message(
-                f"✅ Steam ID linked: **{steam_id}**",
-                ephemeral=True
-            )
+                await interaction.followup.send(
+                    f"✅ Steam ID linked: **{steam_id}**",
+                    ephemeral=True
+                )
+            except Exception as e:
+                print("link_steam error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ link_steam failed: {e}", ephemeral=True)
 
         @self.tree.command(name="guid_status", description="Check your GUID approval status", guild=GUILD_OBJ)
         async def guid_status(interaction: discord.Interaction):
-            with get_db() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("""
-                        SELECT mxb_name, steam_id, guid, guid_status, approved
-                        FROM riders
-                        WHERE discord_id = %s
-                    """, (str(interaction.user.id),))
-                    rider = cur.fetchone()
+            await interaction.response.defer(ephemeral=True)
+            try:
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("""
+                            SELECT mxb_name, steam_id, guid, guid_status, approved
+                            FROM riders
+                            WHERE discord_id = %s
+                        """, (str(interaction.user.id),))
+                        rider = cur.fetchone()
 
-            if not rider:
-                await interaction.response.send_message(
-                    "❌ You are not registered yet. Use /register_mxb first.",
+                if not rider:
+                    await interaction.followup.send(
+                        "❌ You are not registered yet. Use /register_mxb first.",
+                        ephemeral=True
+                    )
+                    return
+
+                await interaction.followup.send(
+                    f"**MXB Name:** {rider['mxb_name'] or 'Not set'}\n"
+                    f"**Steam ID:** {rider['steam_id'] or 'Not set'}\n"
+                    f"**GUID:** {rider['guid'] or 'Not set'}\n"
+                    f"**GUID Status:** {rider['guid_status']}\n"
+                    f"**Approved:** {rider['approved']}",
                     ephemeral=True
                 )
-                return
-
-            await interaction.response.send_message(
-                f"**MXB Name:** {rider['mxb_name'] or 'Not set'}\n"
-                f"**Steam ID:** {rider['steam_id'] or 'Not set'}\n"
-                f"**GUID:** {rider['guid'] or 'Not set'}\n"
-                f"**GUID Status:** {rider['guid_status']}\n"
-                f"**Approved:** {rider['approved']}",
-                ephemeral=True
-            )
+            except Exception as e:
+                print("guid_status error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ guid_status failed: {e}", ephemeral=True)
 
         @self.tree.command(name="my_profile", description="Show your saved profile", guild=GUILD_OBJ)
         async def my_profile(interaction: discord.Interaction):
-            with get_db() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("""
-                        SELECT mxb_name, steam_id, guid, guid_status, team_name, rider_number, class_name
-                        FROM riders
-                        WHERE discord_id = %s
-                    """, (str(interaction.user.id),))
-                    rider = cur.fetchone()
+            await interaction.response.defer(ephemeral=True)
+            try:
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("""
+                            SELECT mxb_name, steam_id, guid, guid_status, team_name, rider_number, class_name
+                            FROM riders
+                            WHERE discord_id = %s
+                        """, (str(interaction.user.id),))
+                        rider = cur.fetchone()
 
-            if not rider:
-                await interaction.response.send_message(
-                    "❌ No profile found yet. Use /register_mxb first.",
+                if not rider:
+                    await interaction.followup.send(
+                        "❌ No profile found yet. Use /register_mxb first.",
+                        ephemeral=True
+                    )
+                    return
+
+                await interaction.followup.send(
+                    f"**MXB Name:** {rider['mxb_name'] or '-'}\n"
+                    f"**Steam ID:** {rider['steam_id'] or '-'}\n"
+                    f"**GUID:** {rider['guid'] or '-'}\n"
+                    f"**GUID Status:** {rider['guid_status'] or '-'}\n"
+                    f"**Team:** {rider['team_name'] or '-'}\n"
+                    f"**Rider Number:** {rider['rider_number'] or '-'}\n"
+                    f"**Class:** {rider['class_name'] or '-'}",
                     ephemeral=True
                 )
-                return
-
-            await interaction.response.send_message(
-                f"**MXB Name:** {rider['mxb_name'] or '-'}\n"
-                f"**Steam ID:** {rider['steam_id'] or '-'}\n"
-                f"**GUID:** {rider['guid'] or '-'}\n"
-                f"**GUID Status:** {rider['guid_status'] or '-'}\n"
-                f"**Team:** {rider['team_name'] or '-'}\n"
-                f"**Rider Number:** {rider['rider_number'] or '-'}\n"
-                f"**Class:** {rider['class_name'] or '-'}",
-                ephemeral=True
-            )
+            except Exception as e:
+                print("my_profile error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ my_profile failed: {e}", ephemeral=True)
 
         @self.tree.command(name="set_guid_status", description="Approve or reject a rider GUID", guild=GUILD_OBJ)
         @app_commands.describe(member="Discord member", status="approved, mismatch, rejected, pending")
         async def set_guid_status(interaction: discord.Interaction, member: discord.Member, status: str):
-            if not is_staff(interaction.user):
-                await interaction.response.send_message("❌ No permission.", ephemeral=True)
-                return
+            await interaction.response.defer(ephemeral=True)
+            try:
+                if not is_staff(interaction.user):
+                    await interaction.followup.send("❌ No permission.", ephemeral=True)
+                    return
 
-            allowed = {"approved", "mismatch", "rejected", "pending"}
-            if status not in allowed:
-                await interaction.response.send_message(
-                    "❌ Status must be approved, mismatch, rejected, or pending.",
-                    ephemeral=True
+                allowed = {"approved", "mismatch", "rejected", "pending"}
+                if status not in allowed:
+                    await interaction.followup.send(
+                        "❌ Status must be approved, mismatch, rejected, or pending.",
+                        ephemeral=True
+                    )
+                    return
+
+                with get_db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE riders
+                            SET guid_status = %s,
+                                approved = CASE WHEN %s = 'approved' THEN TRUE ELSE FALSE END
+                            WHERE discord_id = %s
+                        """, (status, status, str(member.id)))
+                        conn.commit()
+
+                await interaction.followup.send(
+                    f"✅ {member.mention} GUID status set to **{status}**."
                 )
-                return
-
-            with get_db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        UPDATE riders
-                        SET guid_status = %s,
-                            approved = CASE WHEN %s = 'approved' THEN TRUE ELSE FALSE END
-                        WHERE discord_id = %s
-                    """, (status, status, str(member.id)))
-                    conn.commit()
-
-            await interaction.response.send_message(
-                f"✅ {member.mention} GUID status set to **{status}**."
-            )
+            except Exception as e:
+                print("set_guid_status error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ set_guid_status failed: {e}", ephemeral=True)
 
         @self.tree.command(name="create_event", description="Create a race event", guild=GUILD_OBJ)
         @app_commands.describe(
@@ -273,103 +332,121 @@ class LeagueBot(commands.Bot):
             track: str,
             event_type: str = "practice"
         ):
-            if not is_staff(interaction.user):
-                await interaction.response.send_message("❌ No permission.", ephemeral=True)
-                return
+            await interaction.response.defer(ephemeral=True)
+            try:
+                if not is_staff(interaction.user):
+                    await interaction.followup.send("❌ No permission.", ephemeral=True)
+                    return
 
-            event_type = event_type.lower().strip()
-            if event_type not in {"practice", "qualifier", "finals"}:
-                await interaction.response.send_message(
-                    "❌ event_type must be practice, qualifier, or finals.",
-                    ephemeral=True
-                )
-                return
-
-            requires_guid = event_type in {"qualifier", "finals"}
-
-            with get_db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO events (name, track, season, status, event_type, requires_guid)
-                        VALUES (%s,%s,%s,'open',%s,%s)
-                        RETURNING id
-                    """, (name, track, DEFAULT_SEASON, event_type, requires_guid))
-                    event_id = cur.fetchone()[0]
-                    conn.commit()
-
-            if RACE_ANNOUNCEMENTS_CHANNEL_ID:
-                channel = self.get_channel(int(RACE_ANNOUNCEMENTS_CHANNEL_ID))
-                if channel:
-                    await channel.send(
-                        f"🏁 **New Event Created**\n"
-                        f"**ID:** {event_id}\n"
-                        f"**Name:** {name}\n"
-                        f"**Track:** {track}\n"
-                        f"**Type:** {event_type}\n"
-                        f"**GUID Lock:** {'Yes' if requires_guid else 'No'}"
+                event_type = event_type.lower().strip()
+                if event_type not in {"practice", "qualifier", "finals"}:
+                    await interaction.followup.send(
+                        "❌ event_type must be practice, qualifier, or finals.",
+                        ephemeral=True
                     )
+                    return
 
-            await interaction.response.send_message(f"✅ Event created with ID **{event_id}**.")
+                requires_guid = event_type in {"qualifier", "finals"}
+
+                with get_db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO events (name, track, season, status, event_type, requires_guid)
+                            VALUES (%s,%s,%s,'open',%s,%s)
+                            RETURNING id
+                        """, (name, track, DEFAULT_SEASON, event_type, requires_guid))
+                        event_id = cur.fetchone()[0]
+                        conn.commit()
+
+                if RACE_ANNOUNCEMENTS_CHANNEL_ID:
+                    channel = self.get_channel(int(RACE_ANNOUNCEMENTS_CHANNEL_ID))
+                    if channel:
+                        await channel.send(
+                            f"🏁 **New Event Created**\n"
+                            f"**ID:** {event_id}\n"
+                            f"**Name:** {name}\n"
+                            f"**Track:** {track}\n"
+                            f"**Type:** {event_type}\n"
+                            f"**GUID Lock:** {'Yes' if requires_guid else 'No'}"
+                        )
+
+                await interaction.followup.send(f"✅ Event created with ID **{event_id}**.")
+            except Exception as e:
+                print("create_event error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ create_event failed: {e}", ephemeral=True)
 
         @self.tree.command(name="list_events", description="List current events", guild=GUILD_OBJ)
         async def list_events(interaction: discord.Interaction):
-            with get_db() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("""
-                        SELECT id, name, track, event_type, status, requires_guid
-                        FROM events
-                        ORDER BY id DESC
-                        LIMIT 10
-                    """)
-                    events = cur.fetchall()
+            await interaction.response.defer(ephemeral=True)
+            try:
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("""
+                            SELECT id, name, track, event_type, status, requires_guid
+                            FROM events
+                            ORDER BY id DESC
+                            LIMIT 10
+                        """)
+                        events = cur.fetchall()
 
-            if not events:
-                await interaction.response.send_message("No events found.", ephemeral=True)
-                return
+                if not events:
+                    await interaction.followup.send("No events found.", ephemeral=True)
+                    return
 
-            lines = []
-            for e in events:
-                lines.append(
-                    f"**#{e['id']}** — {e['name']} | {e['track']} | {e['event_type']} | {e['status']} | GUID: {'Yes' if e['requires_guid'] else 'No'}"
-                )
+                lines = []
+                for e in events:
+                    lines.append(
+                        f"**#{e['id']}** — {e['name']} | {e['track']} | {e['event_type']} | {e['status']} | GUID: {'Yes' if e['requires_guid'] else 'No'}"
+                    )
 
-            await interaction.response.send_message("\n".join(lines), ephemeral=True)
+                await interaction.followup.send("\n".join(lines), ephemeral=True)
+            except Exception as e:
+                print("list_events error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ list_events failed: {e}", ephemeral=True)
 
         @self.tree.command(name="join_race", description="Join an event", guild=GUILD_OBJ)
         @app_commands.describe(event_id="Event ID")
         async def join_race(interaction: discord.Interaction, event_id: int):
-            with get_db() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("SELECT * FROM riders WHERE discord_id = %s", (str(interaction.user.id),))
-                    rider = cur.fetchone()
-                    if not rider:
-                        await interaction.response.send_message(
-                            "❌ You must register first with /register_mxb.",
-                            ephemeral=True
-                        )
-                        return
+            await interaction.response.defer(ephemeral=True)
+            try:
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT * FROM riders WHERE discord_id = %s", (str(interaction.user.id),))
+                        rider = cur.fetchone()
+                        if not rider:
+                            await interaction.followup.send(
+                                "❌ You must register first with /register_mxb.",
+                                ephemeral=True
+                            )
+                            return
 
-                    cur.execute("SELECT * FROM events WHERE id = %s", (event_id,))
-                    event = cur.fetchone()
-                    if not event:
-                        await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-                        return
+                        cur.execute("SELECT * FROM events WHERE id = %s", (event_id,))
+                        event = cur.fetchone()
+                        if not event:
+                            await interaction.followup.send("❌ Event not found.", ephemeral=True)
+                            return
 
-                    if event["requires_guid"] and rider["guid_status"] != "approved":
-                        await interaction.response.send_message(
-                            "❌ This event is GUID locked. Your GUID is not approved yet.",
-                            ephemeral=True
-                        )
-                        return
+                        if event["requires_guid"] and rider["guid_status"] != "approved":
+                            await interaction.followup.send(
+                                "❌ This event is GUID locked. Your GUID is not approved yet.",
+                                ephemeral=True
+                            )
+                            return
 
-                    cur.execute("""
-                        INSERT INTO registrations (event_id, rider_id)
-                        VALUES (%s,%s)
-                        ON CONFLICT (event_id, rider_id) DO NOTHING
-                    """, (event_id, rider["id"]))
-                    conn.commit()
+                        cur.execute("""
+                            INSERT INTO registrations (event_id, rider_id)
+                            VALUES (%s,%s)
+                            ON CONFLICT (event_id, rider_id) DO NOTHING
+                        """, (event_id, rider["id"]))
+                        conn.commit()
 
-            await interaction.response.send_message(f"✅ Joined event **#{event_id}**.", ephemeral=True)
+                await interaction.followup.send(f"✅ Joined event **#{event_id}**.", ephemeral=True)
+            except Exception as e:
+                print("join_race error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ join_race failed: {e}", ephemeral=True)
 
         try:
             synced = await self.tree.sync(guild=GUILD_OBJ)
