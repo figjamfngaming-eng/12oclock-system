@@ -1,42 +1,7 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="card">
-    <div class="title">Events</div>
-
-    {% if events %}
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Track</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Class</th>
-                    <th>Season</th>
-                    <th>Round</th>
-                    <th>GUID Lock</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for event in events %}
-                <tr>
-                    <td><a class="inline-link" href="/event/{{ event.id }}">#{{ event.id }}</a></td>
-                    <td>{{ event.name }}</td>
-                    <td>{{ event.track }}</td>
-                    <td>{{ event.event_type }}</td>
-                    <td>{{ event.status }}</td>
-                    <td>{{ event.class_name }}</td>
-                    <td>{{ event.season }}</td>
-                    <td>{{ event.round_number }}</td>
-                    <td>{{ "Yes" if event.requires_guid else "No" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <div class="subtle">No events found.</div>
-    {% endif %}
-</div>
+<h2>Events</h2>
+{% for e in events %}
+<div>{{e.id}} {{e.name}}</div>
+{% endfor %}
 {% endblock %}
