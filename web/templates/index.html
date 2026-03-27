@@ -1,4 +1,51 @@
 {% extends "base.html" %}
+
 {% block content %}
-<h1>12 OClock Boyz</h1>
+<div class="card">
+    <h1>League Control Center</h1>
+    <p class="subtle">
+        MXGP and SMX race system with riders, events, gates, results, and leaderboard.
+    </p>
+</div>
+
+<div class="stats">
+    <div class="card">
+        <div class="subtle">Registered Riders</div>
+        <div class="stat-number">{{ riders_total }}</div>
+    </div>
+
+    <div class="card">
+        <div class="subtle">Total Events</div>
+        <div class="stat-number">{{ events_total }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Latest Events</h2>
+
+    {% if latest_events %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Class</th>
+                <th>Stage</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in latest_events %}
+            <tr>
+                <td><a class="link" href="/event/{{ e.id }}">#{{ e.id }}</a></td>
+                <td>{{ e.name }}</td>
+                <td>{{ e.class_name }}</td>
+                <td>{{ e.race_stage }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No events yet.</p>
+    {% endif %}
+</div>
 {% endblock %}
