@@ -100,7 +100,7 @@ def init_db():
                     guid_status TEXT DEFAULT 'pending',
                     team_name TEXT,
                     rider_number TEXT,
-                    class_name TEXT,
+                    class_name TEXT DEFAULT '450',
                     approved BOOLEAN DEFAULT FALSE,
                     suspended BOOLEAN DEFAULT FALSE,
                     suspension_reason TEXT,
@@ -185,6 +185,11 @@ def init_db():
                     UNIQUE(event_id, gate_order)
                 );
             """)
+
+            cur.execute("ALTER TABLE riders ADD COLUMN IF NOT EXISTS class_name TEXT DEFAULT '450';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS series TEXT DEFAULT 'MXGP';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS class_name TEXT DEFAULT '450';")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS race_stage TEXT DEFAULT 'qualifying';")
 
             conn.commit()
 
@@ -677,6 +682,49 @@ class LeagueBot(commands.Bot):
                 traceback.print_exc()
                 await interaction.followup.send(f"❌ view_gates failed: {e}", ephemeral=True)
 
+        @self.tree.command(name="advance_stage", description="Advance event to next stage", guild=GUILD_OBJ)
+        @app_commands.describe(event_id="Event ID")
+        async def advance_stage(interaction: discord.Interaction, event_id: int):
+            await interaction.response.defer(ephemeral=True)
+            try:
+                if not is_staff(interaction.user):
+                    await interaction.followup.send("❌ No permission.", ephemeral=True)
+                    return
+
+                next_map = {
+                    "qualifying": "heat1",
+                    "heat1": "heat2",
+                    "heat2": "final",
+                    "final": "final"
+                }
+
+                with get_db() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT race_stage FROM events WHERE id = %s", (event_id,))
+                        event = cur.fetchone()
+                        if not event:
+                            await interaction.followup.send("❌ Event not found.", ephemeral=True)
+                            return
+
+                        current_stage = event["race_stage"]
+                        next_stage = next_map[current_stage]
+
+                        cur.execute("""
+                            UPDATE events
+                            SET race_stage = %s
+                            WHERE id = %s
+                        """, (next_stage, event_id))
+                        conn.commit()
+
+                await interaction.followup.send(
+                    f"✅ Event **#{event_id}** moved from **{current_stage}** to **{next_stage}**.",
+                    ephemeral=True
+                )
+            except Exception as e:
+                print("advance_stage error:")
+                traceback.print_exc()
+                await interaction.followup.send(f"❌ advance_stage failed: {e}", ephemeral=True)
+
         @self.tree.command(name="start_race", description="Start race and DM password to joined riders", guild=GUILD_OBJ)
         @app_commands.describe(event_id="Event ID")
         async def start_race(interaction: discord.Interaction, event_id: int):
@@ -732,6 +780,9 @@ class LeagueBot(commands.Bot):
                         await user.send(
                             f"🏁 **Race Started**\n"
                             f"**Event:** {event['name']}\n"
+                            f"**Series:** {event.get('series', 'MXGP')}\n"
+                            f"**Class:** {event.get('class_name', '450')}\n"
+                            f"**Stage:** {event.get('race_stage', 'qualifying')}\n"
                             f"**Track:** {event['track']}\n"
                             f"**Password:** `{password}`"
                         )
@@ -933,83 +984,6 @@ class LeagueBot(commands.Bot):
                 print("leaderboard error:")
                 traceback.print_exc()
                 await interaction.followup.send(f"❌ leaderboard failed: {e}", ephemeral=True)
-
-        @self.tree.command(name="disqualify", description="Disqualify rider from event", guild=GUILD_OBJ)
-        @app_commands.describe(event_id="Event ID", member="Rider to DQ")
-        async def disqualify(interaction: discord.Interaction, event_id: int, member: discord.Member):
-            await interaction.response.defer(ephemeral=True)
-            try:
-                if not is_staff(interaction.user):
-                    await interaction.followup.send("❌ No permission.", ephemeral=True)
-                    return
-
-                with get_db() as conn:
-                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                        cur.execute("SELECT * FROM riders WHERE discord_id = %s", (str(member.id),))
-                        rider = cur.fetchone()
-                        if not rider:
-                            await interaction.followup.send("❌ Rider not registered.", ephemeral=True)
-                            return
-
-                        cur.execute("DELETE FROM registrations WHERE event_id = %s AND rider_id = %s", (event_id, rider["id"]))
-                        cur.execute("DELETE FROM results WHERE event_id = %s AND rider_id = %s", (event_id, rider["id"]))
-                        conn.commit()
-
-                await interaction.followup.send(f"✅ {member.mention} disqualified from event **#{event_id}**.", ephemeral=True)
-            except Exception as e:
-                print("disqualify error:")
-                traceback.print_exc()
-                await interaction.followup.send(f"❌ disqualify failed: {e}", ephemeral=True)
-
-        @self.tree.command(name="suspend_rider", description="Suspend a rider", guild=GUILD_OBJ)
-        @app_commands.describe(member="Rider", reason="Suspension reason")
-        async def suspend_rider(interaction: discord.Interaction, member: discord.Member, reason: str):
-            await interaction.response.defer(ephemeral=True)
-            try:
-                if not is_staff(interaction.user):
-                    await interaction.followup.send("❌ No permission.", ephemeral=True)
-                    return
-
-                with get_db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            UPDATE riders
-                            SET suspended = TRUE,
-                                suspension_reason = %s
-                            WHERE discord_id = %s
-                        """, (reason, str(member.id)))
-                        conn.commit()
-
-                await interaction.followup.send(f"✅ {member.mention} suspended.\nReason: **{reason}**", ephemeral=True)
-            except Exception as e:
-                print("suspend_rider error:")
-                traceback.print_exc()
-                await interaction.followup.send(f"❌ suspend_rider failed: {e}", ephemeral=True)
-
-        @self.tree.command(name="unsuspend_rider", description="Remove rider suspension", guild=GUILD_OBJ)
-        @app_commands.describe(member="Rider")
-        async def unsuspend_rider(interaction: discord.Interaction, member: discord.Member):
-            await interaction.response.defer(ephemeral=True)
-            try:
-                if not is_staff(interaction.user):
-                    await interaction.followup.send("❌ No permission.", ephemeral=True)
-                    return
-
-                with get_db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            UPDATE riders
-                            SET suspended = FALSE,
-                                suspension_reason = NULL
-                            WHERE discord_id = %s
-                        """, (str(member.id),))
-                        conn.commit()
-
-                await interaction.followup.send(f"✅ {member.mention} unsuspended.", ephemeral=True)
-            except Exception as e:
-                print("unsuspend_rider error:")
-                traceback.print_exc()
-                await interaction.followup.send(f"❌ unsuspend_rider failed: {e}", ephemeral=True)
 
         try:
             synced = await self.tree.sync(guild=GUILD_OBJ)
