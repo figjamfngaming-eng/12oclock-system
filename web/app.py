@@ -27,8 +27,7 @@ def lb():
             cur.execute("""
             SELECT mxb_name, SUM(points) pts
             FROM riders r JOIN results res ON r.id=res.rider_id
-            GROUP BY mxb_name
-            ORDER BY pts DESC
+            GROUP BY mxb_name ORDER BY pts DESC
             """)
             return render_template("leaderboard.html", rows=cur.fetchall())
 
@@ -37,36 +36,34 @@ def event(id):
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM events WHERE id=%s",(id,))
-            e = cur.fetchone()
+            e=cur.fetchone()
             cur.execute("""
-            SELECT mxb_name, position, points
-            FROM results JOIN riders ON riders.id=results.rider_id
+            SELECT mxb_name, position FROM results
+            JOIN riders ON riders.id=results.rider_id
             WHERE event_id=%s
             """,(id,))
-            r = cur.fetchall()
-            return render_template("event.html", event=e, results=r)
+            r=cur.fetchall()
+            return render_template("event.html",event=e,results=r)
 
 @app.route("/director")
 def director():
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM events")
-            return render_template("director.html", events=cur.fetchall())
+            return render_template("director.html",events=cur.fetchall())
 
-@app.route("/director/action", methods=["POST"])
+@app.route("/director/action",methods=["POST"])
 def act():
-    id = request.form["event_id"]
-    action = request.form["action"]
+    id=request.form["event_id"]
     with db() as conn:
         with conn.cursor() as cur:
-            if action=="advance":
-                cur.execute("""
-                UPDATE events SET race_stage=
-                CASE WHEN race_stage='qualifying' THEN 'heat1'
-                     WHEN race_stage='heat1' THEN 'heat2'
-                     ELSE 'final' END
-                WHERE id=%s
-                """,(id,))
+            cur.execute("""
+            UPDATE events SET race_stage=
+            CASE WHEN race_stage='qualifying' THEN 'heat1'
+            WHEN race_stage='heat1' THEN 'heat2'
+            ELSE 'final' END
+            WHERE id=%s
+            """,(id,))
             conn.commit()
     return redirect("/director")
 
@@ -81,5 +78,4 @@ def live():
             """)
             return jsonify(cur.fetchall())
 
-if __name__ == "__main__":
-    app.run()
+app.run(host="0.0.0.0",port=10000)
