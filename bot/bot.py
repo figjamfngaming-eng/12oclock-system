@@ -2,32 +2,28 @@ import os
 import discord
 from discord.ext import commands
 import psycopg2
-from psycopg2.extras import RealDictCursor
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+DB = os.getenv("DATABASE_URL")
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!")
 
 def db():
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+    return psycopg2.connect(DB, sslmode="require")
 
 def points(p):
     return {1:26,2:23,3:21,4:19,5:18}.get(p,0)
 
 @bot.event
 async def on_ready():
-    print("Bot ready")
+    print("Bot online")
 
 @bot.command()
 async def register(ctx, name, guid, cls):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-            INSERT INTO riders (mxb_name,guid,class_name)
-            VALUES (%s,%s,%s)
-            """,(name,guid,cls))
+            cur.execute("INSERT INTO riders (mxb_name,guid,class_name) VALUES (%s,%s,%s)",
+                        (name,guid,cls))
             conn.commit()
     await ctx.send("registered")
 
@@ -35,10 +31,7 @@ async def register(ctx, name, guid, cls):
 async def create_event(ctx, name, cls):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-            INSERT INTO events (name,class_name,race_stage)
-            VALUES (%s,%s,'qualifying')
-            """,(name,cls))
+            cur.execute("INSERT INTO events (name,class_name) VALUES (%s,%s)",(name,cls))
             conn.commit()
     await ctx.send("event created")
 
@@ -46,10 +39,8 @@ async def create_event(ctx, name, cls):
 async def join(ctx, event_id:int, rider_id:int):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-            INSERT INTO registrations (event_id,rider_id)
-            VALUES (%s,%s)
-            """,(event_id,rider_id))
+            cur.execute("INSERT INTO registrations (event_id,rider_id) VALUES (%s,%s)",
+                        (event_id,rider_id))
             conn.commit()
     await ctx.send("joined")
 
@@ -58,10 +49,8 @@ async def result(ctx, event_id:int, rider_id:int, pos:int):
     pts = points(pos)
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-            INSERT INTO results (event_id,rider_id,position,points)
-            VALUES (%s,%s,%s,%s)
-            """,(event_id,rider_id,pos,pts))
+            cur.execute("INSERT INTO results VALUES (DEFAULT,%s,%s,%s,%s)",
+                        (event_id,rider_id,pos,pts))
             conn.commit()
     await ctx.send("result saved")
 
