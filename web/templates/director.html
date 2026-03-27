@@ -1,11 +1,55 @@
 {% extends "base.html" %}
+
 {% block content %}
-<h2>Director</h2>
-{% for e in events %}
-<form method="post" action="/director/action">
-{{e.name}}
-<input type="hidden" name="event_id" value="{{e.id}}">
-<button>Next Stage</button>
-</form>
-{% endfor %}
+<div class="card">
+    <h2>Race Director Panel</h2>
+    <p class="subtle">Advance stages or clear results and gates.</p>
+
+    {% if events %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Class</th>
+                <th>Stage</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in events %}
+            <tr>
+                <td>#{{ e.id }}</td>
+                <td>{{ e.name }}</td>
+                <td>{{ e.class_name }}</td>
+                <td>{{ e.race_stage }}</td>
+                <td>
+                    <form method="post" action="/director/action" style="display:inline;">
+                        <input type="hidden" name="event_id" value="{{ e.id }}">
+                        <input type="hidden" name="action" value="advance">
+                        <button class="btn" type="submit">Next Stage</button>
+                    </form>
+
+                    <form method="post" action="/director/action" style="display:inline;">
+                        <input type="hidden" name="event_id" value="{{ e.id }}">
+                        <input type="hidden" name="action" value="delete_results">
+                        <button class="btn btn-danger" type="submit">Clear Results</button>
+                    </form>
+
+                    <form method="post" action="/director/action" style="display:inline;">
+                        <input type="hidden" name="event_id" value="{{ e.id }}">
+                        <input type="hidden" name="action" value="delete_gates">
+                        <button class="btn btn-danger" type="submit">Clear Gates</button>
+                    </form>
+
+                    <a class="link" href="/event/{{ e.id }}">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No events found.</p>
+    {% endif %}
+</div>
 {% endblock %}
