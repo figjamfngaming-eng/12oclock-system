@@ -1,21 +1,15 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="card">
-    <div class="title">Race Info</div>
-
-    <div class="pill">ID: {{ event.id }}</div>
-    <div class="pill">Name: {{ event.name }}</div>
-    <div class="pill">Track: {{ event.track }}</div>
-    <div class="pill">Type: {{ event.event_type }}</div>
-    <div class="pill">Status: {{ event.status }}</div>
-    <div class="pill">GUID Lock: {{ "Yes" if event.requires_guid else "No" }}</div>
-
-    <p><strong>Season:</strong> {{ event.season }}</p>
-    <p><strong>Round:</strong> {{ event.round_number }}</p>
-    <p><strong>Class:</strong> {{ event.class_name }}</p>
-    <p><strong>Password:</strong> {{ event.race_password or "Not started" }}</p>
-    <p><strong>Started:</strong> {{ event.started_at or "-" }}</p>
-    <p><strong>Ended:</strong> {{ event.ended_at or "-" }}</p>
-</div>
+<div id="d"></div>
+<script>
+async function l(){
+let r=await fetch('/api/live');
+let d=await r.json();
+let h='';
+d.forEach(x=>h+=x.gate_order+" "+x.mxb_name+"<br>");
+document.getElementById("d").innerHTML=h;
+}
+setInterval(l,2000);
+l();
+</script>
 {% endblock %}
