@@ -1,15 +1,39 @@
 {% extends "base.html" %}
+
 {% block content %}
-<div id="d"></div>
+<div class="card">
+    <h2>Live Gate Feed</h2>
+    <p class="subtle">Updates automatically.</p>
+    <div id="live-data">Loading...</div>
+</div>
+
 <script>
-async function l(){
-let r=await fetch('/api/live');
-let d=await r.json();
-let h='';
-d.forEach(x=>h+=x.gate_order+" "+x.mxb_name+"<br>");
-document.getElementById("d").innerHTML=h;
+async function loadLive() {
+    try {
+        const response = await fetch("/api/live");
+        const data = await response.json();
+
+        if (!data.length) {
+            document.getElementById("live-data").innerHTML = "<p>No live gate data yet.</p>";
+            return;
+        }
+
+        let html = "";
+        data.forEach(row => {
+            html += `
+                <div class="live-row">
+                    Event #${row.event_id} - Gate ${row.gate_order} - ${row.mxb_name}
+                </div>
+            `;
+        });
+
+        document.getElementById("live-data").innerHTML = html;
+    } catch (err) {
+        document.getElementById("live-data").innerHTML = "<p>Failed to load live data.</p>";
+    }
 }
-setInterval(l,2000);
-l();
+
+loadLive();
+setInterval(loadLive, 2000);
 </script>
 {% endblock %}
