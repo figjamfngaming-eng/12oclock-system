@@ -1,32 +1,7 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="card">
-    <div class="title">Leaderboard</div>
-
-    {% if rows %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Rank</th>
-                    <th>Rider</th>
-                    <th>Class</th>
-                    <th>Total Points</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in rows %}
-                <tr>
-                    <td>#{{ loop.index }}</td>
-                    <td>{{ row.mxb_name or "Unknown" }}</td>
-                    <td>{{ row.class_name or "Open" }}</td>
-                    <td>{{ row.total_points }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <div class="subtle">No leaderboard data yet.</div>
-    {% endif %}
-</div>
+<h2>Leaderboard</h2>
+{% for r in rows %}
+<div>{{r.mxb_name}} {{r.pts}}</div>
+{% endfor %}
 {% endblock %}
