@@ -191,16 +191,27 @@ def link_accounts():
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO account_links (
-                        site_user_id, discord_id, discord_username, steam_id, steam_name, link_status
+                        site_user_id, discord_id, discord_username, steam_id, steam_name, link_status, approved
                     )
-                    VALUES (%s, %s, %s, %s, %s, 'pending')
+                    VALUES (%s, %s, %s, %s, %s, 'pending', FALSE)
                     ON CONFLICT (site_user_id) DO UPDATE SET
                         discord_id = EXCLUDED.discord_id,
                         discord_username = EXCLUDED.discord_username,
                         steam_id = EXCLUDED.steam_id,
                         steam_name = EXCLUDED.steam_name,
-                        link_status = 'pending'
+                        link_status = 'pending',
+                        approved = FALSE
                 """, (user["id"], discord_id, discord_username, steam_id, steam_name))
+
+                cur.execute("""
+                    UPDATE riders
+                    SET discord_user_id = %s,
+                        discord_username = %s,
+                        steam_id = %s,
+                        is_linked = FALSE
+                    WHERE discord_id = %s
+                """, (discord_id, discord_username, steam_id, discord_id))
+
                 conn.commit()
 
         flash("Link request saved. Waiting for admin approval.")
