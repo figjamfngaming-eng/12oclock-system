@@ -1,51 +1,118 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
-    <h1>Dashboard</h1>
-    <p><strong>Username:</strong> {{ user.username }}</p>
-    <p><strong>Email:</strong> {{ user.email }}</p>
+<div class="card" style="overflow:hidden;">
+    <div style="display:flex; gap:24px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+        <div style="flex:1; min-width:280px;">
+            <div class="pill">12 O'Clock Boyz League System</div>
+            <h1 style="font-size:42px; margin:12px 0 10px 0; color:#ffd54a;">
+                MX Bikes League Control Center
+            </h1>
+            <p class="subtle" style="font-size:18px; line-height:1.6; max-width:700px;">
+                Official home for races, riders, standings, gate order, event tracking, account linking,
+                and full 12 O’Clock Boyz competition control.
+            </p>
 
-    <a class="btn" href="/link-accounts">Manage Linked Accounts</a>
-    <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
+            <div style="margin-top:20px;">
+                <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
+                <a class="btn" href="/rules">Race Rules</a>
+                <a class="btn" href="/events">View Events</a>
+                <a class="btn" href="/leaderboard">Leaderboard</a>
+            </div>
+        </div>
+
+        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center;">
+            <img src="/static/images/mxb-logo.png" alt="MX Bikes Logo" style="height:120px; width:auto; border-radius:12px; background:#111; padding:10px;">
+            <img src="/static/images/12oclock-logo.png" alt="12 O'Clock Boyz Logo" style="height:120px; width:auto; border-radius:12px; background:#111; padding:10px;">
+        </div>
+    </div>
+</div>
+
+<div class="stats">
+    <div class="card">
+        <div class="subtle">Registered Riders</div>
+        <div class="stat-number">{{ riders_total }}</div>
+    </div>
+
+    <div class="card">
+        <div class="subtle">Total Events</div>
+        <div class="stat-number">{{ events_total }}</div>
+    </div>
+
+    <div class="card">
+        <div class="subtle">Website Access</div>
+        <div class="stat-number" style="font-size:24px;">Live</div>
+    </div>
 </div>
 
 <div class="card">
-    <h3>Link Status</h3>
-    {% if link_data %}
-        <div class="pill">Status: {{ link_data.link_status }}</div>
-        <div class="pill">Discord Verified: {{ link_data.verified_discord }}</div>
-        <div class="pill">Steam Verified: {{ link_data.verified_steam }}</div>
+    <h2 style="margin-bottom:10px;">What You Can Do Here</h2>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; margin-top:12px;">
+        <div style="background:#141420; border:1px solid #2a2a38; border-radius:12px; padding:16px;">
+            <h3 style="margin-top:0; color:#ffd54a;">Race Management</h3>
+            <p class="subtle">Track events, stages, gate order, race progress, and results for MXGP and SMX rounds.</p>
+        </div>
+
+        <div style="background:#141420; border:1px solid #2a2a38; border-radius:12px; padding:16px;">
+            <h3 style="margin-top:0; color:#ffd54a;">Account Linking</h3>
+            <p class="subtle">Sign up, log in, and submit your Discord and Steam details for official race approval.</p>
+        </div>
+
+        <div style="background:#141420; border:1px solid #2a2a38; border-radius:12px; padding:16px;">
+            <h3 style="margin-top:0; color:#ffd54a;">Standings</h3>
+            <p class="subtle">View leaderboard points, rider rankings, and event-by-event results across the season.</p>
+        </div>
+
+        <div style="background:#141420; border:1px solid #2a2a38; border-radius:12px; padding:16px;">
+            <h3 style="margin-top:0; color:#ffd54a;">Race Director Tools</h3>
+            <p class="subtle">Advance race stages, clear gates, manage event flow, and keep the system synced.</p>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Latest Events</h2>
+
+    {% if latest_events %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Class</th>
+                <th>Stage</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in latest_events %}
+            <tr>
+                <td><a class="link" href="/event/{{ e.id }}">#{{ e.id }}</a></td>
+                <td>{{ e.name }}</td>
+                <td>{{ e.class_name }}</td>
+                <td>{{ e.race_stage }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
     {% else %}
-        <p>No linked accounts yet.</p>
+    <p>No events yet.</p>
     {% endif %}
 </div>
 
 <div class="card">
-    <h3>Recent Events</h3>
-    {% if recent_events %}
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Class</th>
-                    <th>Stage</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for e in recent_events %}
-                <tr>
-                    <td><a class="link" href="/event/{{ e.id }}">#{{ e.id }}</a></td>
-                    <td>{{ e.name }}</td>
-                    <td>{{ e.class_name }}</td>
-                    <td>{{ e.race_stage }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <p>No events yet.</p>
-    {% endif %}
+    <h2>How to Get Started</h2>
+    <ol style="line-height:1.8; color:#dddddd; padding-left:20px;">
+        <li>Create your website account.</li>
+        <li>Log in and open the <strong>Link Accounts</strong> page.</li>
+        <li>Submit your Discord and Steam details.</li>
+        <li>Join the Discord server and follow race announcements.</li>
+        <li>Wait for approval, then enter official events.</li>
+    </ol>
+
+    <div style="margin-top:16px;">
+        <a class="btn" href="/signup">Create Account</a>
+        <a class="btn" href="/login">Login</a>
+        <a class="btn" href="/link-accounts">Link Accounts</a>
+    </div>
 </div>
 {% endblock %}
