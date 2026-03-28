@@ -2,34 +2,37 @@
 
 {% block content %}
 <div class="card">
-    <h1>Link Steam + Discord</h1>
-    <p class="subtle">Use the real account linking buttons below.</p>
-
-    <a class="btn btn-discord" href="{{ url_for('auth_discord') }}">Connect Discord</a>
-    <a class="btn" href="{{ url_for('auth_steam') }}">Connect Steam</a>
-    <a class="btn" href="{{ url_for('finalize_link') }}">Finalize Link</a>
+    <h1>Link Accounts</h1>
+    <p class="subtle">Link your Steam and Discord to race officially.</p>
 </div>
 
-{% if link_data %}
 <div class="card">
-    <h3>Current Link Data</h3>
+    <h3>Steam Linking</h3>
 
-    <div class="pill">Status: {{ link_data.link_status }}</div>
-    <div class="pill">Discord Verified: {{ link_data.verified_discord }}</div>
-    <div class="pill">Steam Verified: {{ link_data.verified_steam }}</div>
+    <a class="btn" href="/auth/steam">Link Steam (Official Login)</a>
 
-    <p><strong>Discord ID:</strong> {{ link_data.discord_id or "-" }}</p>
-    <p><strong>Discord Username:</strong> {{ link_data.discord_username or "-" }}</p>
-    <p><strong>Discord Email:</strong> {{ link_data.discord_email or "-" }}</p>
-
-    <p><strong>Steam ID:</strong> {{ link_data.steam_id or "-" }}</p>
-    <p><strong>Steam Profile:</strong>
-        {% if link_data.steam_profile_url %}
-            <a class="link" href="{{ link_data.steam_profile_url }}" target="_blank">{{ link_data.steam_profile_url }}</a>
-        {% else %}
-            -
-        {% endif %}
-    </p>
+    {% if link_data and link_data.steam_id %}
+        <div style="margin-top:10px;">
+            <div class="pill">Steam ID: {{ link_data.steam_id }}</div>
+            <div class="pill">Status: {{ link_data.link_status }}</div>
+        </div>
+    {% endif %}
 </div>
-{% endif %}
+
+<div class="card">
+    <h3>Discord Linking (Manual)</h3>
+
+    <form method="POST">
+        <label>Discord ID</label>
+        <input name="discord_id" value="{{ link_data.discord_id if link_data else '' }}">
+
+        <label>Discord Username</label>
+        <input name="discord_username" value="{{ link_data.discord_username if link_data else '' }}">
+
+        <label>Steam Name</label>
+        <input name="steam_name" value="{{ link_data.steam_name if link_data else '' }}">
+
+        <button class="btn" type="submit">Save</button>
+    </form>
+</div>
 {% endblock %}
