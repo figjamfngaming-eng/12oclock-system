@@ -6,7 +6,6 @@ from psycopg2.extras import RealDictCursor
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))
 
 ROLE_LINKED_ID = int(os.getenv("ROLE_LINKED_ID", "0"))
@@ -75,9 +74,9 @@ def one_w_role_id(series: str, class_name: str) -> int:
             return ROLE_1W_MXGP_450_ID
         if c == "250F":
             return ROLE_1W_MXGP_250F_ID
-        if c == "SM125" or c == "125":
+        if c in {"SM125", "125"}:
             return ROLE_1W_MXGP_125_ID
-        if c == "SM85" or c == "85":
+        if c in {"SM85", "85"}:
             return ROLE_1W_MXGP_85_ID
 
     if s == "SMX":
@@ -85,9 +84,9 @@ def one_w_role_id(series: str, class_name: str) -> int:
             return ROLE_1W_SMX_450_ID
         if c == "250F":
             return ROLE_1W_SMX_250F_ID
-        if c == "SM125" or c == "125":
+        if c in {"SM125", "125"}:
             return ROLE_1W_SMX_125_ID
-        if c == "SM85" or c == "85":
+        if c in {"SM85", "85"}:
             return ROLE_1W_SMX_85_ID
 
     return 0
@@ -100,37 +99,63 @@ async def get_guild():
     return guild
 
 
+async def get_member_safe(guild: discord.Guild, discord_user_id: str):
+    try:
+        member = guild.get_member(int(discord_user_id))
+        if member is None:
+            member = await guild.fetch_member(int(discord_user_id))
+        return member
+    except Exception:
+        return None
+
+
 async def sync_member_roles_for_discord_user(discord_user_id: str):
     guild = await get_guild()
-    member = guild.get_member(int(discord_user_id))
+    member = await get_member_safe(guild, discord_user_id)
     if member is None:
-        member = await guild.fetch_member(int(discord_user_id))
+        return False, "Member not found in server."
 
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT
+                    su.discord_user_id AS site_discord_user_id,
+                    su.discord_username AS site_discord_username,
+                    su.verified_discord,
                     al.discord_id,
                     al.discord_username,
                     al.link_status,
                     al.approved AS link_approved,
                     r.id AS rider_id,
                     r.class_name,
-                    r.approved AS rider_approved
-                FROM account_links al
+                    r.approved AS rider_approved,
+                    r.is_linked,
+                    r.auto_approved
+                FROM site_users su
+                LEFT JOIN account_links al
+                    ON al.site_user_id = su.id
                 LEFT JOIN riders r
-                    ON r.discord_user_id = al.discord_id
-                    OR r.discord_id = al.discord_id
-                WHERE al.discord_id = %s
+                    ON r.discord_user_id = su.discord_user_id
+                    OR r.discord_id = su.discord_user_id
+                WHERE su.discord_user_id = %s
+                   OR al.discord_id = %s
+                   OR r.discord_user_id = %s
+                   OR r.discord_id = %s
                 LIMIT 1
-            """, (discord_user_id,))
+            """, (discord_user_id, discord_user_id, discord_user_id, discord_user_id))
             row = cur.fetchone()
 
     if not row:
         return False, "No linked account found."
 
+    if not row["verified_discord"]:
+        return False, "Discord OAuth not verified."
+
     if not row["link_approved"]:
-        return False, "Link is not approved yet."
+        return False, "Website link is not approved."
+
+    if not row["rider_approved"]:
+        return False, "Rider is not approved."
 
     linked_role = guild.get_role(ROLE_LINKED_ID) if ROLE_LINKED_ID else None
     class_role = guild.get_role(class_role_id(row["class_name"])) if class_role_id(row["class_name"]) else None
@@ -153,9 +178,40 @@ async def sync_member_roles_for_discord_user(discord_user_id: str):
         await member.remove_roles(*roles_to_remove, reason="Updating class role sync")
 
     if roles_to_add:
-        await member.add_roles(*roles_to_add, reason="Approved website account link")
+        await member.add_roles(*roles_to_add, reason="Auto approved website link")
 
     return True, "Roles synced."
+
+
+async def sync_all_approved_members():
+    synced = 0
+    skipped = 0
+
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT
+                    COALESCE(su.discord_user_id, al.discord_id, r.discord_user_id, r.discord_id) AS discord_user_id
+                FROM site_users su
+                LEFT JOIN account_links al ON al.site_user_id = su.id
+                LEFT JOIN riders r
+                    ON r.discord_user_id = su.discord_user_id
+                    OR r.discord_id = su.discord_user_id
+                WHERE su.verified_discord = TRUE
+                  AND COALESCE(al.approved, FALSE) = TRUE
+                  AND COALESCE(r.approved, FALSE) = TRUE
+                  AND COALESCE(su.discord_user_id, al.discord_id, r.discord_user_id, r.discord_id) IS NOT NULL
+            """)
+            rows = cur.fetchall()
+
+    for row in rows:
+        ok, _ = await sync_member_roles_for_discord_user(row["discord_user_id"])
+        if ok:
+            synced += 1
+        else:
+            skipped += 1
+
+    return synced, skipped
 
 
 async def update_one_w_role_for_series_class(series: str, class_name: str):
@@ -172,8 +228,7 @@ async def update_one_w_role_for_series_class(series: str, class_name: str):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT
-                    r.discord_user_id,
-                    r.discord_id,
+                    COALESCE(r.discord_user_id, r.discord_id) AS discord_user_id,
                     r.mxb_name,
                     COALESCE(SUM(res.points), 0) AS total_points
                 FROM results res
@@ -190,20 +245,19 @@ async def update_one_w_role_for_series_class(series: str, class_name: str):
     if not leader:
         return False, f"No points found for {series} {class_name}"
 
-    target_discord_id = leader["discord_user_id"] or leader["discord_id"]
+    target_discord_id = leader["discord_user_id"]
     if not target_discord_id:
         return False, "Leader has no Discord ID saved"
 
-    member = guild.get_member(int(target_discord_id))
+    member = await get_member_safe(guild, target_discord_id)
     if member is None:
-        member = await guild.fetch_member(int(target_discord_id))
+        return False, "Leader is not in the Discord server"
 
     members_with_role = list(target_role.members)
     to_remove = [m for m in members_with_role if m.id != member.id]
 
-    if to_remove:
-        for m in to_remove:
-            await m.remove_roles(target_role, reason=f"1W transferred for {series} {class_name}")
+    for m in to_remove:
+        await m.remove_roles(target_role, reason=f"1W transferred for {series} {class_name}")
 
     if target_role not in member.roles:
         await member.add_roles(target_role, reason=f"Current points leader for {series} {class_name}")
@@ -214,6 +268,11 @@ async def update_one_w_role_for_series_class(series: str, class_name: str):
 @bot.event
 async def on_ready():
     print(f"Bot online as {bot.user}")
+    try:
+        synced, skipped = await sync_all_approved_members()
+        print(f"Auto role sync complete: synced={synced}, skipped={skipped}")
+    except Exception as e:
+        print(f"Auto role sync on startup failed: {e}")
 
 
 @bot.command()
@@ -237,9 +296,10 @@ async def register(ctx, name: str, guid: str, cls: str):
                         guid,
                         class_name,
                         approved,
-                        is_linked
+                        is_linked,
+                        auto_approved
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, FALSE, FALSE)
+                    VALUES (%s, %s, %s, %s, %s, %s, FALSE, FALSE, FALSE)
                     ON CONFLICT (discord_id) DO UPDATE SET
                         discord_user_id = EXCLUDED.discord_user_id,
                         discord_username = EXCLUDED.discord_username,
@@ -267,7 +327,7 @@ async def riders(ctx):
         with db() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, mxb_name, class_name, approved
+                    SELECT id, mxb_name, class_name, approved, is_linked, auto_approved
                     FROM riders
                     ORDER BY id DESC
                     LIMIT 20
@@ -279,7 +339,7 @@ async def riders(ctx):
             return
 
         msg = "\n".join([
-            f"#{r['id']} - {r['mxb_name']} | {r['class_name']} | approved={r['approved']}"
+            f"#{r['id']} - {r['mxb_name']} | {r['class_name']} | approved={r['approved']} | linked={r['is_linked']} | auto={r['auto_approved']}"
             for r in rows
         ])
         await ctx.send(msg)
@@ -344,7 +404,7 @@ async def join(ctx, event_id: int):
         with db() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, approved, class_name
+                    SELECT id, approved, class_name, is_linked
                     FROM riders
                     WHERE discord_id = %s
                 """, (str(ctx.author.id),))
@@ -354,8 +414,8 @@ async def join(ctx, event_id: int):
                     await ctx.send("❌ Register first with !register")
                     return
 
-                if not rider["approved"]:
-                    await ctx.send("❌ Your account is not linked and approved yet.")
+                if not rider["approved"] or not rider["is_linked"]:
+                    await ctx.send("❌ Your account is not fully linked and approved yet.")
                     return
 
                 cur.execute("""
@@ -519,52 +579,29 @@ async def advance(ctx, event_id: int):
 
 
 @bot.command()
-async def approve_link(ctx, discord_user_id: str):
-    try:
-        if not ctx.author.guild_permissions.administrator:
-            await ctx.send("❌ Admin only.")
-            return
-
-        with db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE account_links
-                    SET approved = TRUE,
-                        link_status = 'approved'
-                    WHERE discord_id = %s
-                """, (discord_user_id,))
-
-                cur.execute("""
-                    UPDATE riders
-                    SET approved = TRUE,
-                        is_linked = TRUE,
-                        discord_user_id = %s
-                    WHERE discord_id = %s
-                       OR discord_user_id = %s
-                """, (discord_user_id, discord_user_id, discord_user_id))
-                conn.commit()
-
-        ok, msg = await sync_member_roles_for_discord_user(discord_user_id)
-        if ok:
-            await ctx.send(f"✅ Link approved and roles synced for {discord_user_id}")
-        else:
-            await ctx.send(f"⚠️ Link approved but role sync issue: {msg}")
-    except Exception as e:
-        await ctx.send(f"❌ approve_link failed: {e}")
-
-
-@bot.command()
 async def sync_roles(ctx, discord_user_id: str = None):
     try:
         target_id = discord_user_id or str(ctx.author.id)
         ok, msg = await sync_member_roles_for_discord_user(target_id)
-
         if ok:
             await ctx.send(f"✅ Roles synced for {target_id}")
         else:
             await ctx.send(f"❌ sync_roles failed: {msg}")
     except Exception as e:
         await ctx.send(f"❌ sync_roles failed: {e}")
+
+
+@bot.command()
+async def sync_all_roles(ctx):
+    try:
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ Admin only.")
+            return
+
+        synced, skipped = await sync_all_approved_members()
+        await ctx.send(f"✅ Full sync done. Synced: {synced} | Skipped: {skipped}")
+    except Exception as e:
+        await ctx.send(f"❌ sync_all_roles failed: {e}")
 
 
 bot.run(TOKEN)
