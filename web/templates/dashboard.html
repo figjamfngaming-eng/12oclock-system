@@ -3,14 +3,14 @@
 {% block content %}
 <div class="card">
     <h1>Dashboard</h1>
-    <p class="subtle">Welcome {{ user.username }}</p>
+    <p class="subtle">Welcome, {{ user.username }}</p>
 </div>
 
 <div class="card">
-    <h3>Account Status</h3>
+    <h2>Account Status</h2>
 
     {% if link_data %}
-        <div class="pill">Status: {{ link_data.link_status }}</div>
+        <div class="pill">Link Status: {{ link_data.link_status }}</div>
 
         {% if link_data.discord_username %}
             <div class="pill">Discord: {{ link_data.discord_username }}</div>
@@ -20,27 +20,42 @@
             <div class="pill">Steam ID: {{ link_data.steam_id }}</div>
         {% endif %}
     {% else %}
-        <p>No account linked yet.</p>
+        <p>No account links saved yet.</p>
     {% endif %}
 
-    <a class="btn" href="/link-accounts">Link Accounts</a>
+    <div style="margin-top: 14px;">
+        <a class="btn" href="/link-accounts">Link Accounts</a>
+        <a class="btn" href="/events">View Events</a>
+        <a class="btn" href="/leaderboard">Leaderboard</a>
+    </div>
 </div>
 
 <div class="card">
-    <h3>Recent Events</h3>
+    <h2>Recent Events</h2>
 
     {% if recent_events %}
-        <ul>
-            {% for e in recent_events %}
-                <li>
-                    <a class="link" href="/event/{{ e.id }}">
-                        {{ e.name }} ({{ e.class_name }})
-                    </a>
-                </li>
-            {% endfor %}
-        </ul>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Class</th>
+                    <th>Stage</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in recent_events %}
+                <tr>
+                    <td><a class="link" href="/event/{{ e.id }}">#{{ e.id }}</a></td>
+                    <td>{{ e.name }}</td>
+                    <td>{{ e.class_name }}</td>
+                    <td>{{ e.race_stage }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     {% else %}
-        <p>No events yet.</p>
+        <p>No recent events found.</p>
     {% endif %}
 </div>
 {% endblock %}
