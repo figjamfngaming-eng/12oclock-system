@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h1>Link Steam + Discord</h1>
+    <p class="subtle">Use the real account linking buttons below.</p>
+
+    <a class="btn btn-discord" href="{{ url_for('auth_discord') }}">Connect Discord</a>
+    <a class="btn" href="{{ url_for('auth_steam') }}">Connect Steam</a>
+    <a class="btn" href="{{ url_for('finalize_link') }}">Finalize Link</a>
+</div>
+
+{% if link_data %}
+<div class="card">
+    <h3>Current Link Data</h3>
+
+    <div class="pill">Status: {{ link_data.link_status }}</div>
+    <div class="pill">Discord Verified: {{ link_data.verified_discord }}</div>
+    <div class="pill">Steam Verified: {{ link_data.verified_steam }}</div>
+
+    <p><strong>Discord ID:</strong> {{ link_data.discord_id or "-" }}</p>
+    <p><strong>Discord Username:</strong> {{ link_data.discord_username or "-" }}</p>
+    <p><strong>Discord Email:</strong> {{ link_data.discord_email or "-" }}</p>
+
+    <p><strong>Steam ID:</strong> {{ link_data.steam_id or "-" }}</p>
+    <p><strong>Steam Profile:</strong>
+        {% if link_data.steam_profile_url %}
+            <a class="link" href="{{ link_data.steam_profile_url }}" target="_blank">{{ link_data.steam_profile_url }}</a>
+        {% else %}
+            -
+        {% endif %}
+    </p>
+</div>
+{% endif %}
+{% endblock %}
