@@ -51,7 +51,7 @@ def home():
             events_total = cur.fetchone()["total"]
 
             cur.execute("""
-                SELECT id, name, class_name, race_stage
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
                 FROM events
                 ORDER BY id DESC
                 LIMIT 6
@@ -143,6 +143,7 @@ def dashboard():
         return redirect(url_for("login"))
 
     link_data = None
+    rider_data = None
     recent_events = []
 
     with db() as conn:
@@ -154,8 +155,29 @@ def dashboard():
             """, (user["id"],))
             link_data = cur.fetchone()
 
+            if link_data and link_data.get("discord_id"):
+                cur.execute("""
+                    SELECT
+                        id,
+                        discord_id,
+                        discord_user_id,
+                        discord_username,
+                        mxb_name,
+                        guid,
+                        steam_id,
+                        class_name,
+                        is_linked,
+                        approved,
+                        created_at
+                    FROM riders
+                    WHERE discord_id = %s
+                       OR discord_user_id = %s
+                    LIMIT 1
+                """, (link_data["discord_id"], link_data["discord_id"]))
+                rider_data = cur.fetchone()
+
             cur.execute("""
-                SELECT id, name, class_name, race_stage
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
                 FROM events
                 ORDER BY id DESC
                 LIMIT 5
@@ -166,6 +188,7 @@ def dashboard():
         "dashboard.html",
         user=user,
         link_data=link_data,
+        rider_data=rider_data,
         recent_events=recent_events
     )
 
@@ -182,9 +205,12 @@ def link_accounts():
         discord_username = request.form.get("discord_username", "").strip()
         steam_id = request.form.get("steam_id", "").strip()
         steam_name = request.form.get("steam_name", "").strip()
+        rider_name = request.form.get("rider_name", "").strip()
+        rider_class = request.form.get("rider_class", "").strip().upper()
+        rider_guid = request.form.get("rider_guid", "").strip()
 
         if not discord_id or not discord_username or not steam_id or not steam_name:
-            flash("All fields are required.")
+            flash("Discord and Steam fields are required.")
             return redirect(url_for("link_accounts"))
 
         with db() as conn:
@@ -203,19 +229,57 @@ def link_accounts():
                         approved = FALSE
                 """, (user["id"], discord_id, discord_username, steam_id, steam_name))
 
-                cur.execute("""
-                    UPDATE riders
-                    SET discord_user_id = %s,
-                        discord_username = %s,
-                        steam_id = %s,
-                        is_linked = FALSE
-                    WHERE discord_id = %s
-                """, (discord_id, discord_username, steam_id, discord_id))
+                if rider_name and rider_class:
+                    cur.execute("""
+                        INSERT INTO riders (
+                            discord_id,
+                            discord_user_id,
+                            discord_username,
+                            mxb_name,
+                            guid,
+                            steam_id,
+                            class_name,
+                            is_linked,
+                            approved
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, FALSE)
+                        ON CONFLICT (discord_id) DO UPDATE SET
+                            discord_user_id = EXCLUDED.discord_user_id,
+                            discord_username = EXCLUDED.discord_username,
+                            mxb_name = EXCLUDED.mxb_name,
+                            guid = EXCLUDED.guid,
+                            steam_id = EXCLUDED.steam_id,
+                            class_name = EXCLUDED.class_name,
+                            is_linked = FALSE,
+                            approved = FALSE
+                    """, (
+                        discord_id,
+                        discord_id,
+                        discord_username,
+                        rider_name,
+                        rider_guid if rider_guid else None,
+                        steam_id,
+                        rider_class
+                    ))
+                else:
+                    cur.execute("""
+                        UPDATE riders
+                        SET discord_user_id = %s,
+                            discord_username = %s,
+                            steam_id = %s,
+                            is_linked = FALSE,
+                            approved = FALSE
+                        WHERE discord_id = %s
+                           OR discord_user_id = %s
+                    """, (discord_id, discord_username, steam_id, discord_id, discord_id))
 
                 conn.commit()
 
         flash("Link request saved. Waiting for admin approval.")
         return redirect(url_for("link_accounts"))
+
+    link_data = None
+    rider_data = None
 
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -226,7 +290,28 @@ def link_accounts():
             """, (user["id"],))
             link_data = cur.fetchone()
 
-    return render_template("link_accounts.html", link_data=link_data)
+            if link_data and link_data.get("discord_id"):
+                cur.execute("""
+                    SELECT
+                        id,
+                        discord_id,
+                        discord_user_id,
+                        discord_username,
+                        mxb_name,
+                        guid,
+                        steam_id,
+                        class_name,
+                        is_linked,
+                        approved,
+                        created_at
+                    FROM riders
+                    WHERE discord_id = %s
+                       OR discord_user_id = %s
+                    LIMIT 1
+                """, (link_data["discord_id"], link_data["discord_id"]))
+                rider_data = cur.fetchone()
+
+    return render_template("link_accounts.html", link_data=link_data, rider_data=rider_data)
 
 
 @app.route("/events")
@@ -234,7 +319,7 @@ def events():
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, name, class_name, race_stage, created_at
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, created_at
                 FROM events
                 ORDER BY id DESC
             """)
@@ -248,7 +333,7 @@ def event(event_id: int):
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, name, class_name, race_stage, created_at
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, created_at
                 FROM events
                 WHERE id = %s
             """, (event_id,))
@@ -308,7 +393,7 @@ def director():
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, name, class_name, race_stage
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
                 FROM events
                 ORDER BY id DESC
                 LIMIT 20
