@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 from urllib.parse import urlencode
 
@@ -17,6 +18,10 @@ DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "https://discord.gg/yourinv
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
+
+STEAM_REALM = os.getenv("STEAM_REALM", "https://your-site.onrender.com/")
+STEAM_RETURN_URL = os.getenv("STEAM_RETURN_URL", "https://your-site.onrender.com/auth/steam/callback")
+STEAM_OPENID_ENDPOINT = "https://steamcommunity.com/openid/"
 
 DISCORD_AUTH_URL = "https://discord.com/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
@@ -116,6 +121,27 @@ def discord_avatar_url(user: dict):
     if not avatar or not user_id:
         return None
     return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar}.png"
+
+
+def extract_steam_id_from_claimed_id(claimed_id: str):
+    if not claimed_id:
+        return None
+    match = re.match(r"^https?://steamcommunity\.com/openid/id/(\d+)$", claimed_id)
+    if match:
+        return match.group(1)
+    return None
+
+
+def build_steam_openid_url():
+    params = {
+        "openid.ns": "http://specs.openid.net/auth/2.0",
+        "openid.mode": "checkid_setup",
+        "openid.return_to": STEAM_RETURN_URL,
+        "openid.realm": STEAM_REALM,
+        "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+        "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+    }
+    return f"{STEAM_OPENID_ENDPOINT}?{urlencode(params)}"
 
 
 @app.route("/")
@@ -275,16 +301,15 @@ def auth_discord_callback():
                     WHERE id = %s
                 """, (display_name, avatar_url, email, user_id))
             else:
+                email_match = None
                 if email:
                     cur.execute("""
-                        SELECT id, username
+                        SELECT id
                         FROM site_users
                         WHERE email = %s
                         LIMIT 1
                     """, (email,))
                     email_match = cur.fetchone()
-                else:
-                    email_match = None
 
                 if email_match:
                     user_id = email_match["id"]
@@ -324,14 +349,87 @@ def auth_discord_callback():
                         avatar_url,
                         email,
                     ))
-                    created = cur.fetchone()
-                    user_id = created["id"]
+                    user_id = cur.fetchone()["id"]
 
             conn.commit()
 
     session["site_user_id"] = user_id
     flash("Logged in with Discord successfully.")
     return redirect(url_for("dashboard"))
+
+
+@app.route("/auth/steam")
+def auth_steam():
+    user = current_user()
+    if not user:
+        flash("Please log in first.")
+        return redirect(url_for("login"))
+
+    return redirect(build_steam_openid_url())
+
+
+@app.route("/auth/steam/callback")
+def auth_steam_callback():
+    user = current_user()
+    if not user:
+        flash("Please log in first.")
+        return redirect(url_for("login"))
+
+    openid_params = dict(request.args)
+
+    if openid_params.get("openid.mode") != "id_res":
+        flash("Steam login was cancelled or failed.")
+        return redirect(url_for("link_accounts"))
+
+    verify_params = {
+        "openid.assoc_handle": openid_params.get("openid.assoc_handle", ""),
+        "openid.signed": openid_params.get("openid.signed", ""),
+        "openid.sig": openid_params.get("openid.sig", ""),
+        "openid.ns": openid_params.get("openid.ns", "http://specs.openid.net/auth/2.0"),
+        "openid.mode": "check_authentication",
+    }
+
+    signed_fields = openid_params.get("openid.signed", "").split(",")
+    for field in signed_fields:
+        arg_name = f"openid.{field}"
+        if arg_name in openid_params:
+            verify_params[arg_name] = openid_params[arg_name]
+
+    try:
+        response = requests.post(STEAM_OPENID_ENDPOINT, data=verify_params, timeout=20)
+        response.raise_for_status()
+        body = response.text
+    except Exception as e:
+        flash(f"Steam verification failed: {e}")
+        return redirect(url_for("link_accounts"))
+
+    if "is_valid:true" not in body:
+        flash("Steam verification failed.")
+        return redirect(url_for("link_accounts"))
+
+    claimed_id = openid_params.get("openid.claimed_id", "")
+    steam_id = extract_steam_id_from_claimed_id(claimed_id)
+
+    if not steam_id:
+        flash("Could not read Steam ID from Steam response.")
+        return redirect(url_for("link_accounts"))
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO account_links (
+                    site_user_id, steam_id, link_status, approved
+                )
+                VALUES (%s, %s, 'pending', FALSE)
+                ON CONFLICT (site_user_id) DO UPDATE SET
+                    steam_id = EXCLUDED.steam_id,
+                    link_status = 'pending',
+                    approved = FALSE
+            """, (user["id"], steam_id))
+            conn.commit()
+
+    flash(f"Steam account linked: {steam_id}")
+    return redirect(url_for("link_accounts"))
 
 
 @app.route("/logout")
