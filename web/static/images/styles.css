@@ -1,0 +1,191 @@
+:root{
+  --bg:#0b0b12;
+  --card:rgba(20,20,34,.72);
+  --border:rgba(255,255,255,.10);
+  --text:#f3f3fb;
+  --muted:rgba(243,243,251,.65);
+  --gold:#ffd15a;
+  --purple:#b38bff;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  color:var(--text);
+  background:var(--bg);
+  min-height:100vh;
+}
+
+.bg{
+  position:fixed;
+  inset:0;
+  background:
+    radial-gradient(1200px 700px at 20% 10%, rgba(179,139,255,.22), transparent 55%),
+    radial-gradient(1200px 700px at 80% 30%, rgba(255,209,90,.18), transparent 55%),
+    radial-gradient(900px 600px at 50% 90%, rgba(179,139,255,.12), transparent 55%);
+  pointer-events:none;
+  z-index:-1;
+}
+
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  padding:18px 22px;
+  position:sticky;
+  top:0;
+  background:rgba(7,7,12,.72);
+  backdrop-filter: blur(10px);
+  border-bottom:1px solid var(--border);
+}
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.logo{
+  width:44px;
+  height:44px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  object-fit:cover;
+}
+.title{font-weight:900; letter-spacing:.4px}
+.sub{color:var(--muted); font-size:12px}
+
+.nav{
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+.btn{
+  text-decoration:none;
+  color:var(--text);
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  background:rgba(255,255,255,.03);
+}
+.btn:hover{border-color:rgba(255,255,255,.20)}
+.btn.gold{
+  border-color:rgba(255,209,90,.35);
+  box-shadow:0 0 0 1px rgba(255,209,90,.12) inset;
+}
+
+.wrap{
+  padding:24px 22px 90px;
+  max-width:1100px;
+  margin:0 auto;
+}
+
+.hero{
+  display:flex;
+  justify-content:center;
+  margin-top:10px;
+}
+.hero-card{
+  width:100%;
+  border:1px solid var(--border);
+  border-radius:18px;
+  background:var(--card);
+  padding:22px;
+  box-shadow: 0 20px 80px rgba(0,0,0,.35);
+}
+h1,h2{margin:0 0 8px}
+.muted{color:var(--muted)}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:12px;
+  margin-top:14px;
+}
+.card{
+  text-decoration:none;
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:16px;
+  background:rgba(255,255,255,.03);
+}
+.card:hover{border-color:rgba(179,139,255,.35)}
+.card-title{font-weight:800}
+.card-sub{color:var(--muted); margin-top:6px; font-size:13px}
+
+.tabs{
+  display:flex;
+  gap:10px;
+  margin-top:14px;
+  flex-wrap:wrap;
+}
+.tab{
+  text-decoration:none;
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:999px;
+  padding:8px 12px;
+  background:rgba(255,255,255,.03);
+}
+.tab:hover{border-color:rgba(255,255,255,.20)}
+
+.panel{
+  border:1px solid var(--border);
+  border-radius:18px;
+  background:var(--card);
+  overflow:hidden;
+}
+.panel-head{
+  padding:18px;
+  border-bottom:1px solid var(--border);
+}
+.table{padding:8px}
+.row{
+  display:grid;
+  grid-template-columns:60px 90px 90px 1fr 160px 220px;
+  gap:10px;
+  padding:12px 10px;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  align-items:center;
+}
+.row.head{
+  color:var(--muted);
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.12em;
+}
+.mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+.pill{
+  display:inline-block;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.03);
+  font-weight:700;
+}
+.pill.gold{
+  border-color:rgba(255,209,90,.32);
+}
+.empty{padding:16px; color:var(--muted)}
+
+.footer{
+  position:fixed;
+  left:0; right:0; bottom:0;
+  padding:14px 18px;
+  background:rgba(7,7,12,.72);
+  backdrop-filter: blur(10px);
+  border-top:1px solid var(--border);
+}
+.footer-card{
+  max-width:1100px;
+  margin:0 auto;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+}
+.footer-title{font-weight:900}
+.footer-sub{color:var(--muted); font-size:12px}
+.stat{ text-align:right }
+.stat-num{font-weight:900; font-size:18px; color:var(--gold)}
+.stat-label{color:var(--muted); font-size:12px}
