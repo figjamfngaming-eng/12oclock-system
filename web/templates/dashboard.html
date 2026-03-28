@@ -7,13 +7,33 @@
 </div>
 
 <div class="card">
-    <h2>Account Status</h2>
+    <h2>Website Account</h2>
+    <div class="pill">Username: {{ user.username }}</div>
+    <div class="pill">Email: {{ user.email }}</div>
+</div>
+
+<div class="card">
+    <h2>Link Status</h2>
 
     {% if link_data %}
-        <div class="pill">Link Status: {{ link_data.link_status }}</div>
+        <div class="pill">Website Link Status: {{ link_data.link_status }}</div>
+
+        {% if link_data.approved %}
+            <div class="pill">Approved: Yes</div>
+        {% else %}
+            <div class="pill">Approved: No</div>
+        {% endif %}
 
         {% if link_data.discord_username %}
             <div class="pill">Discord: {{ link_data.discord_username }}</div>
+        {% endif %}
+
+        {% if link_data.discord_id %}
+            <div class="pill">Discord ID: {{ link_data.discord_id }}</div>
+        {% endif %}
+
+        {% if link_data.steam_name %}
+            <div class="pill">Steam Name: {{ link_data.steam_name }}</div>
         {% endif %}
 
         {% if link_data.steam_id %}
@@ -24,10 +44,46 @@
     {% endif %}
 
     <div style="margin-top: 14px;">
-        <a class="btn" href="/link-accounts">Link Accounts</a>
-        <a class="btn" href="/events">View Events</a>
-        <a class="btn" href="/leaderboard">Leaderboard</a>
+        <a class="btn" href="/link-accounts">Update Link Details</a>
     </div>
+</div>
+
+<div class="card">
+    <h2>Rider Profile</h2>
+
+    {% if rider_data %}
+        <div class="pill">Rider Name: {{ rider_data.mxb_name }}</div>
+        <div class="pill">Class: {{ rider_data.class_name }}</div>
+
+        {% if rider_data.guid %}
+            <div class="pill">GUID Saved</div>
+        {% endif %}
+
+        {% if rider_data.is_linked %}
+            <div class="pill">Linked: Yes</div>
+        {% else %}
+            <div class="pill">Linked: No</div>
+        {% endif %}
+
+        {% if rider_data.approved %}
+            <div class="pill">Bot Approved: Yes</div>
+        {% else %}
+            <div class="pill">Bot Approved: No</div>
+        {% endif %}
+    {% else %}
+        <p>No rider profile matched yet.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>What To Do Next</h2>
+    <ul>
+        <li>Sign up and log in to the website</li>
+        <li>Open Link Accounts and submit your Discord + Steam + rider details</li>
+        <li>Wait for admin approval</li>
+        <li>Once approved, your Discord roles will sync</li>
+        <li>After approval, you can join official events in your class</li>
+    </ul>
 </div>
 
 <div class="card">
@@ -39,6 +95,7 @@
                 <tr>
                     <th>ID</th>
                     <th>Name</th>
+                    <th>Series</th>
                     <th>Class</th>
                     <th>Stage</th>
                 </tr>
@@ -48,6 +105,7 @@
                 <tr>
                     <td><a class="link" href="/event/{{ e.id }}">#{{ e.id }}</a></td>
                     <td>{{ e.name }}</td>
+                    <td>{{ e.series }}</td>
                     <td>{{ e.class_name }}</td>
                     <td>{{ e.race_stage }}</td>
                 </tr>
