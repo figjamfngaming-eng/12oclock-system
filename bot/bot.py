@@ -15,15 +15,21 @@ ROLE_SM125_ID = int(os.getenv("ROLE_SM125_ID", "0"))
 ROLE_250F_ID = int(os.getenv("ROLE_250F_ID", "0"))
 ROLE_450_ID = int(os.getenv("ROLE_450_ID", "0"))
 
+ROLE_1W_MXGP_450_ID = int(os.getenv("ROLE_1W_MXGP_450_ID", "0"))
+ROLE_1W_MXGP_250F_ID = int(os.getenv("ROLE_1W_MXGP_250F_ID", "0"))
+ROLE_1W_MXGP_125_ID = int(os.getenv("ROLE_1W_MXGP_125_ID", "0"))
+ROLE_1W_MXGP_85_ID = int(os.getenv("ROLE_1W_MXGP_85_ID", "0"))
+ROLE_1W_SMX_450_ID = int(os.getenv("ROLE_1W_SMX_450_ID", "0"))
+ROLE_1W_SMX_250F_ID = int(os.getenv("ROLE_1W_SMX_250F_ID", "0"))
+ROLE_1W_SMX_125_ID = int(os.getenv("ROLE_1W_SMX_125_ID", "0"))
+ROLE_1W_SMX_85_ID = int(os.getenv("ROLE_1W_SMX_85_ID", "0"))
+
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing")
-
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing")
-
 if not DISCORD_GUILD_ID:
     raise RuntimeError("DISCORD_GUILD_ID is missing")
-
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -57,6 +63,33 @@ def class_role_id(class_name: str) -> int:
         return ROLE_250F_ID
     if value == "450":
         return ROLE_450_ID
+    return 0
+
+
+def one_w_role_id(series: str, class_name: str) -> int:
+    s = (series or "").upper().strip()
+    c = (class_name or "").upper().strip()
+
+    if s == "MXGP":
+        if c == "450":
+            return ROLE_1W_MXGP_450_ID
+        if c == "250F":
+            return ROLE_1W_MXGP_250F_ID
+        if c == "SM125" or c == "125":
+            return ROLE_1W_MXGP_125_ID
+        if c == "SM85" or c == "85":
+            return ROLE_1W_MXGP_85_ID
+
+    if s == "SMX":
+        if c == "450":
+            return ROLE_1W_SMX_450_ID
+        if c == "250F":
+            return ROLE_1W_SMX_250F_ID
+        if c == "SM125" or c == "125":
+            return ROLE_1W_SMX_125_ID
+        if c == "SM85" or c == "85":
+            return ROLE_1W_SMX_85_ID
+
     return 0
 
 
@@ -123,6 +156,59 @@ async def sync_member_roles_for_discord_user(discord_user_id: str):
         await member.add_roles(*roles_to_add, reason="Approved website account link")
 
     return True, "Roles synced."
+
+
+async def update_one_w_role_for_series_class(series: str, class_name: str):
+    role_id = one_w_role_id(series, class_name)
+    if not role_id:
+        return False, f"No 1W role configured for {series} {class_name}"
+
+    guild = await get_guild()
+    target_role = guild.get_role(role_id)
+    if not target_role:
+        return False, f"Discord role not found for {series} {class_name}"
+
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    r.discord_user_id,
+                    r.discord_id,
+                    r.mxb_name,
+                    COALESCE(SUM(res.points), 0) AS total_points
+                FROM results res
+                JOIN riders r ON r.id = res.rider_id
+                JOIN events e ON e.id = res.event_id
+                WHERE UPPER(COALESCE(e.series, 'MXGP')) = UPPER(%s)
+                  AND UPPER(e.class_name) = UPPER(%s)
+                GROUP BY r.id, r.discord_user_id, r.discord_id, r.mxb_name
+                ORDER BY total_points DESC, r.mxb_name ASC
+                LIMIT 1
+            """, (series, class_name))
+            leader = cur.fetchone()
+
+    if not leader:
+        return False, f"No points found for {series} {class_name}"
+
+    target_discord_id = leader["discord_user_id"] or leader["discord_id"]
+    if not target_discord_id:
+        return False, "Leader has no Discord ID saved"
+
+    member = guild.get_member(int(target_discord_id))
+    if member is None:
+        member = await guild.fetch_member(int(target_discord_id))
+
+    members_with_role = list(target_role.members)
+    to_remove = [m for m in members_with_role if m.id != member.id]
+
+    if to_remove:
+        for m in to_remove:
+            await m.remove_roles(target_role, reason=f"1W transferred for {series} {class_name}")
+
+    if target_role not in member.roles:
+        await member.add_roles(target_role, reason=f"Current points leader for {series} {class_name}")
+
+    return True, f"1W updated: {leader['mxb_name']} now holds {series} {class_name}"
 
 
 @bot.event
@@ -204,22 +290,24 @@ async def riders(ctx):
 @bot.command()
 async def create_event(ctx, *, args: str):
     try:
-        parts = args.rsplit(" ", 1)
-        if len(parts) != 2:
-            await ctx.send("Usage: !create_event Event Name 450")
+        parts = args.split("|")
+        if len(parts) != 3:
+            await ctx.send("Usage: !create_event Event Name | MXGP | 450")
             return
 
-        name, cls = parts[0], parts[1].upper().strip()
+        name = parts[0].strip()
+        series = parts[1].strip().upper()
+        cls = parts[2].strip().upper()
 
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO events (name, class_name, race_stage)
-                    VALUES (%s, %s, 'qualifying')
-                """, (name, cls))
+                    INSERT INTO events (name, series, class_name, race_stage)
+                    VALUES (%s, %s, %s, 'qualifying')
+                """, (name, series, cls))
                 conn.commit()
 
-        await ctx.send(f"✅ Event created: {name} ({cls})")
+        await ctx.send(f"✅ Event created: {name} | {series} | {cls}")
     except Exception as e:
         await ctx.send(f"❌ create_event failed: {e}")
 
@@ -230,7 +318,7 @@ async def events(ctx):
         with db() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, name, class_name, race_stage
+                    SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
                     FROM events
                     ORDER BY id DESC
                     LIMIT 20
@@ -242,7 +330,7 @@ async def events(ctx):
             return
 
         msg = "\n".join([
-            f"#{r['id']} - {r['name']} | {r['class_name']} | {r['race_stage']}"
+            f"#{r['id']} - {r['name']} | {r['series']} | {r['class_name']} | {r['race_stage']}"
             for r in rows
         ])
         await ctx.send(msg)
@@ -321,7 +409,7 @@ async def result(ctx, event_id: int, rider_id: int, position: int):
         pts = points_for_position(position)
 
         with db() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO results (event_id, rider_id, position, points)
                     VALUES (%s, %s, %s, %s)
@@ -329,9 +417,25 @@ async def result(ctx, event_id: int, rider_id: int, position: int):
                         position = EXCLUDED.position,
                         points = EXCLUDED.points
                 """, (event_id, rider_id, position, pts))
+
+                cur.execute("""
+                    SELECT COALESCE(series, 'MXGP') AS series, class_name
+                    FROM events
+                    WHERE id = %s
+                """, (event_id,))
+                event = cur.fetchone()
+
                 conn.commit()
 
-        await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}")
+        if event:
+            ok, msg = await update_one_w_role_for_series_class(event["series"], event["class_name"])
+            if ok:
+                await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}\n🏆 {msg}")
+            else:
+                await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}\n⚠️ {msg}")
+        else:
+            await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}")
+
     except Exception as e:
         await ctx.send(f"❌ result failed: {e}")
 
@@ -364,6 +468,20 @@ async def leaderboard(ctx):
         await ctx.send("🏆 Leaderboard\n" + msg)
     except Exception as e:
         await ctx.send(f"❌ leaderboard failed: {e}")
+
+
+@bot.command()
+async def update_1w(ctx, series: str, cls: str):
+    try:
+        series = series.upper().strip()
+        cls = cls.upper().strip()
+        ok, msg = await update_one_w_role_for_series_class(series, cls)
+        if ok:
+            await ctx.send(f"✅ {msg}")
+        else:
+            await ctx.send(f"❌ {msg}")
+    except Exception as e:
+        await ctx.send(f"❌ update_1w failed: {e}")
 
 
 @bot.command()
