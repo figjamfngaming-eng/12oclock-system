@@ -20,11 +20,7 @@ async function loadLive() {
 
         let html = "";
         data.forEach(row => {
-            html += `
-                <div class="live-row">
-                    Event #${row.event_id} - Gate ${row.gate_order} - ${row.mxb_name}
-                </div>
-            `;
+            html += `<div class="live-row">Event #${row.event_id} - Gate ${row.gate_order} - ${row.mxb_name}</div>`;
         });
 
         document.getElementById("live-data").innerHTML = html;
