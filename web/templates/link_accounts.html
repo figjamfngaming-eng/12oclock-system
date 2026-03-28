@@ -4,7 +4,7 @@
 <div class="card">
     <h1>Link Accounts</h1>
     <p class="subtle">
-        Link your Discord and Steam so you can be approved for official races.
+        Submit your Discord, Steam, and rider details so staff can approve you for official racing.
     </p>
 </div>
 
@@ -13,6 +13,12 @@
 
     {% if link_data %}
         <div class="pill">Status: {{ link_data.link_status }}</div>
+
+        {% if link_data.approved %}
+            <div class="pill">Approved: Yes</div>
+        {% else %}
+            <div class="pill">Approved: No</div>
+        {% endif %}
 
         {% if link_data.discord_username %}
             <div class="pill">Discord: {{ link_data.discord_username }}</div>
@@ -35,7 +41,34 @@
 </div>
 
 <div class="card">
-    <h2>Submit Link Request</h2>
+    <h2>Rider Details</h2>
+
+    {% if rider_data %}
+        <div class="pill">Rider: {{ rider_data.mxb_name }}</div>
+        <div class="pill">Class: {{ rider_data.class_name }}</div>
+
+        {% if rider_data.guid %}
+            <div class="pill">GUID Saved</div>
+        {% endif %}
+
+        {% if rider_data.is_linked %}
+            <div class="pill">Linked: Yes</div>
+        {% else %}
+            <div class="pill">Linked: No</div>
+        {% endif %}
+
+        {% if rider_data.approved %}
+            <div class="pill">Approved: Yes</div>
+        {% else %}
+            <div class="pill">Approved: No</div>
+        {% endif %}
+    {% else %}
+        <p>No rider details saved yet.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Submit or Update Link Request</h2>
 
     <form method="POST">
         <div class="form-row">
@@ -58,15 +91,28 @@
             <input type="text" name="steam_name" value="{{ link_data.steam_name if link_data else '' }}" required>
         </div>
 
+        <div class="form-row">
+            <label>MX Bikes Rider Name</label>
+            <input type="text" name="rider_name" value="{{ rider_data.mxb_name if rider_data else '' }}">
+        </div>
+
+        <div class="form-row">
+            <label>Rider Class</label>
+            <input type="text" name="rider_class" value="{{ rider_data.class_name if rider_data else '' }}" placeholder="SM85 / SM125 / 250F / 450">
+        </div>
+
+        <div class="form-row">
+            <label>Rider GUID</label>
+            <input type="text" name="rider_guid" value="{{ rider_data.guid if rider_data else '' }}">
+        </div>
+
         <button class="btn" type="submit">Save Link Request</button>
     </form>
 </div>
 
 <div class="card">
     <h2>Discord Server</h2>
-    <p class="subtle">
-        Join the Discord server before racing officially.
-    </p>
+    <p class="subtle">Join the Discord before racing officially.</p>
     <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
 </div>
 {% endblock %}
