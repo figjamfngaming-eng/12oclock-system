@@ -1,14 +1,26 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash
-from werkzeug.security import generate_password_hash, check_password_hash
+import secrets
+from urllib.parse import urlencode
+
+import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-me-now")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "https://discord.gg/yourinvite")
+
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
+
+DISCORD_AUTH_URL = "https://discord.com/oauth2/authorize"
+DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
+DISCORD_API_BASE = "https://discord.com/api/v10"
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing")
@@ -25,7 +37,16 @@ def current_user():
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, username, email, created_at
+                SELECT
+                    id,
+                    username,
+                    email,
+                    discord_user_id,
+                    discord_username,
+                    discord_avatar,
+                    discord_email,
+                    verified_discord,
+                    created_at
                 FROM site_users
                 WHERE id = %s
             """, (session["site_user_id"],))
@@ -38,6 +59,63 @@ def inject_globals():
         "discord_invite_url": DISCORD_INVITE_URL,
         "logged_in_user": current_user()
     }
+
+
+def build_discord_oauth_url():
+    state = secrets.token_urlsafe(32)
+    session["discord_oauth_state"] = state
+
+    params = {
+        "client_id": DISCORD_CLIENT_ID,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "identify email",
+        "state": state,
+        "prompt": "consent",
+    }
+    return f"{DISCORD_AUTH_URL}?{urlencode(params)}"
+
+
+def exchange_discord_code(code: str):
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+    }
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+
+    response = requests.post(
+        DISCORD_TOKEN_URL,
+        data=data,
+        headers=headers,
+        auth=(DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET),
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def fetch_discord_user(access_token: str):
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    response = requests.get(
+        f"{DISCORD_API_BASE}/users/@me",
+        headers=headers,
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def discord_avatar_url(user: dict):
+    avatar = user.get("avatar")
+    user_id = user.get("id")
+    if not avatar or not user_id:
+        return None
+    return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar}.png"
 
 
 @app.route("/")
@@ -88,8 +166,8 @@ def signup():
             with db() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO site_users (username, email, password_hash)
-                        VALUES (%s, %s, %s)
+                        INSERT INTO site_users (username, email, password_hash, verified_discord)
+                        VALUES (%s, %s, %s, FALSE)
                     """, (username, email, password_hash))
                     conn.commit()
 
@@ -128,6 +206,134 @@ def login():
     return render_template("login.html")
 
 
+@app.route("/login/discord")
+def login_discord():
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET or not DISCORD_REDIRECT_URI:
+        flash("Discord OAuth is not configured yet.")
+        return redirect(url_for("login"))
+
+    return redirect(build_discord_oauth_url())
+
+
+@app.route("/auth/discord/callback")
+def auth_discord_callback():
+    error = request.args.get("error")
+    if error:
+        flash(f"Discord login failed: {error}")
+        return redirect(url_for("login"))
+
+    code = request.args.get("code")
+    state = request.args.get("state")
+
+    expected_state = session.get("discord_oauth_state")
+    session.pop("discord_oauth_state", None)
+
+    if not code or not state or state != expected_state:
+        flash("Invalid Discord OAuth state.")
+        return redirect(url_for("login"))
+
+    try:
+        token_data = exchange_discord_code(code)
+        access_token = token_data["access_token"]
+        discord_user = fetch_discord_user(access_token)
+    except Exception as e:
+        flash(f"Discord OAuth exchange failed: {e}")
+        return redirect(url_for("login"))
+
+    discord_id = discord_user.get("id")
+    username = discord_user.get("username")
+    global_name = discord_user.get("global_name")
+    email = discord_user.get("email")
+    avatar_url = discord_avatar_url(discord_user)
+    display_name = global_name or username or f"discord_{discord_id}"
+
+    if not discord_id:
+        flash("Discord login failed: no Discord user ID returned.")
+        return redirect(url_for("login"))
+
+    user_id = None
+
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id
+                FROM site_users
+                WHERE discord_user_id = %s
+                LIMIT 1
+            """, (discord_id,))
+            existing = cur.fetchone()
+
+            if existing:
+                user_id = existing["id"]
+                cur.execute("""
+                    UPDATE site_users
+                    SET
+                        discord_username = %s,
+                        discord_avatar = %s,
+                        discord_email = %s,
+                        verified_discord = TRUE
+                    WHERE id = %s
+                """, (display_name, avatar_url, email, user_id))
+            else:
+                if email:
+                    cur.execute("""
+                        SELECT id, username
+                        FROM site_users
+                        WHERE email = %s
+                        LIMIT 1
+                    """, (email,))
+                    email_match = cur.fetchone()
+                else:
+                    email_match = None
+
+                if email_match:
+                    user_id = email_match["id"]
+                    cur.execute("""
+                        UPDATE site_users
+                        SET
+                            discord_user_id = %s,
+                            discord_username = %s,
+                            discord_avatar = %s,
+                            discord_email = %s,
+                            verified_discord = TRUE
+                        WHERE id = %s
+                    """, (discord_id, display_name, avatar_url, email, user_id))
+                else:
+                    fallback_email = email or f"{discord_id}@discord.local"
+                    random_password_hash = generate_password_hash(secrets.token_urlsafe(32))
+
+                    cur.execute("""
+                        INSERT INTO site_users (
+                            username,
+                            email,
+                            password_hash,
+                            discord_user_id,
+                            discord_username,
+                            discord_avatar,
+                            discord_email,
+                            verified_discord
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+                        RETURNING id
+                    """, (
+                        display_name,
+                        fallback_email,
+                        random_password_hash,
+                        discord_id,
+                        display_name,
+                        avatar_url,
+                        email,
+                    ))
+                    created = cur.fetchone()
+                    user_id = created["id"]
+
+            conn.commit()
+
+    session["site_user_id"] = user_id
+    flash("Logged in with Discord successfully.")
+    return redirect(url_for("dashboard"))
+
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -155,7 +361,13 @@ def dashboard():
             """, (user["id"],))
             link_data = cur.fetchone()
 
+            discord_lookup_id = None
             if link_data and link_data.get("discord_id"):
+                discord_lookup_id = link_data["discord_id"]
+            elif user.get("discord_user_id"):
+                discord_lookup_id = user["discord_user_id"]
+
+            if discord_lookup_id:
                 cur.execute("""
                     SELECT
                         id,
@@ -173,7 +385,7 @@ def dashboard():
                     WHERE discord_id = %s
                        OR discord_user_id = %s
                     LIMIT 1
-                """, (link_data["discord_id"], link_data["discord_id"]))
+                """, (discord_lookup_id, discord_lookup_id))
                 rider_data = cur.fetchone()
 
             cur.execute("""
@@ -200,9 +412,12 @@ def link_accounts():
         flash("Please log in first.")
         return redirect(url_for("login"))
 
+    default_discord_id = user.get("discord_user_id") or ""
+    default_discord_username = user.get("discord_username") or ""
+
     if request.method == "POST":
-        discord_id = request.form.get("discord_id", "").strip()
-        discord_username = request.form.get("discord_username", "").strip()
+        discord_id = request.form.get("discord_id", "").strip() or default_discord_id
+        discord_username = request.form.get("discord_username", "").strip() or default_discord_username
         steam_id = request.form.get("steam_id", "").strip()
         steam_name = request.form.get("steam_name", "").strip()
         rider_name = request.form.get("rider_name", "").strip()
@@ -290,7 +505,13 @@ def link_accounts():
             """, (user["id"],))
             link_data = cur.fetchone()
 
+            discord_lookup_id = None
             if link_data and link_data.get("discord_id"):
+                discord_lookup_id = link_data["discord_id"]
+            elif user.get("discord_user_id"):
+                discord_lookup_id = user["discord_user_id"]
+
+            if discord_lookup_id:
                 cur.execute("""
                     SELECT
                         id,
@@ -308,10 +529,16 @@ def link_accounts():
                     WHERE discord_id = %s
                        OR discord_user_id = %s
                     LIMIT 1
-                """, (link_data["discord_id"], link_data["discord_id"]))
+                """, (discord_lookup_id, discord_lookup_id))
                 rider_data = cur.fetchone()
 
-    return render_template("link_accounts.html", link_data=link_data, rider_data=rider_data)
+    return render_template(
+        "link_accounts.html",
+        link_data=link_data,
+        rider_data=rider_data,
+        oauth_discord_id=default_discord_id,
+        oauth_discord_username=default_discord_username
+    )
 
 
 @app.route("/events")
