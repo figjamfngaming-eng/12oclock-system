@@ -4,7 +4,7 @@
 <div class="card">
     <h1>Link Accounts</h1>
     <p class="subtle">
-        Submit your Discord, Steam, and rider details so staff can approve you for official racing.
+        Log in with Discord, link Steam, then submit rider details.
     </p>
 </div>
 
@@ -41,7 +41,20 @@
 </div>
 
 <div class="card">
-    <h2>Submit or Update Link Request</h2>
+    <h2>Step 1: Discord Login</h2>
+    <p class="subtle">Your Discord account is filled automatically when you log in with Discord.</p>
+    <div class="pill">Discord ID: {{ oauth_discord_id or 'Not linked yet' }}</div>
+    <div class="pill">Discord Username: {{ oauth_discord_username or 'Not linked yet' }}</div>
+</div>
+
+<div class="card">
+    <h2>Step 2: Link Steam</h2>
+    <p class="subtle">Use the official Steam login button.</p>
+    <a class="btn" href="/auth/steam">Link Steam with Steam Login</a>
+</div>
+
+<div class="card">
+    <h2>Step 3: Submit Rider Details</h2>
 
     <form method="POST">
         <div class="form-row">
@@ -56,12 +69,12 @@
 
         <div class="form-row">
             <label>Steam ID</label>
-            <input type="text" name="steam_id" value="{{ link_data.steam_id if link_data else '' }}" required>
+            <input type="text" name="steam_id" value="{{ link_data.steam_id if link_data else '' }}">
         </div>
 
         <div class="form-row">
             <label>Steam Name</label>
-            <input type="text" name="steam_name" value="{{ link_data.steam_name if link_data else '' }}" required>
+            <input type="text" name="steam_name" value="{{ link_data.steam_name if link_data else '' }}">
         </div>
 
         <div class="form-row">
@@ -79,13 +92,7 @@
             <input type="text" name="rider_guid" value="{{ rider_data.guid if rider_data else '' }}">
         </div>
 
-        <button class="btn" type="submit">Save Link Request</button>
+        <button class="btn" type="submit">Save Rider Details</button>
     </form>
-</div>
-
-<div class="card">
-    <h2>Discord Server</h2>
-    <p class="subtle">Join the Discord before racing officially.</p>
-    <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
 </div>
 {% endblock %}
