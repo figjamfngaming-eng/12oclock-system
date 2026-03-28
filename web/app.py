@@ -87,9 +87,7 @@ def exchange_discord_code(code: str):
         "code": code,
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     response = requests.post(
         DISCORD_TOKEN_URL,
@@ -103,9 +101,7 @@ def exchange_discord_code(code: str):
 
 
 def fetch_discord_user(access_token: str):
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
+    headers = {"Authorization": f"Bearer {access_token}"}
     response = requests.get(
         f"{DISCORD_API_BASE}/users/@me",
         headers=headers,
@@ -518,6 +514,8 @@ def dashboard():
     link_data = None
     rider_data = None
     recent_events = []
+    next_event = None
+    one_w_roles = []
 
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -557,19 +555,55 @@ def dashboard():
                 rider_data = cur.fetchone()
 
             cur.execute("""
-                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, status, queue_open
                 FROM events
                 ORDER BY id DESC
                 LIMIT 5
             """)
             recent_events = cur.fetchall()
 
+            cur.execute("""
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, status, queue_open
+                FROM events
+                WHERE status IN ('pending', 'queue_open')
+                ORDER BY id DESC
+                LIMIT 1
+            """)
+            next_event = cur.fetchone()
+
+            if rider_data:
+                cur.execute("""
+                    WITH class_leaders AS (
+                        SELECT
+                            COALESCE(e.series, 'MXGP') AS series,
+                            e.class_name,
+                            r.id AS rider_id,
+                            r.mxb_name,
+                            COALESCE(SUM(res.points), 0) AS pts,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY COALESCE(e.series, 'MXGP'), e.class_name
+                                ORDER BY COALESCE(SUM(res.points), 0) DESC, r.mxb_name ASC
+                            ) AS rn
+                        FROM results res
+                        JOIN riders r ON r.id = res.rider_id
+                        JOIN events e ON e.id = res.event_id
+                        GROUP BY COALESCE(e.series, 'MXGP'), e.class_name, r.id, r.mxb_name
+                    )
+                    SELECT series, class_name, pts
+                    FROM class_leaders
+                    WHERE rider_id = %s
+                      AND rn = 1
+                """, (rider_data["id"],))
+                one_w_roles = cur.fetchall()
+
     return render_template(
         "dashboard.html",
         user=user,
         link_data=link_data,
         rider_data=rider_data,
-        recent_events=recent_events
+        recent_events=recent_events,
+        next_event=next_event,
+        one_w_roles=one_w_roles
     )
 
 
@@ -726,7 +760,7 @@ def events():
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, created_at
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, created_at, status, queue_open
                 FROM events
                 ORDER BY id DESC
             """)
@@ -740,7 +774,7 @@ def event(event_id: int):
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, created_at
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, created_at, status, queue_open
                 FROM events
                 WHERE id = %s
             """, (event_id,))
@@ -800,7 +834,7 @@ def director():
     with db() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
+                SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, status, queue_open
                 FROM events
                 ORDER BY id DESC
                 LIMIT 20
