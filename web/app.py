@@ -144,6 +144,72 @@ def build_steam_openid_url():
     return f"{STEAM_OPENID_ENDPOINT}?{urlencode(params)}"
 
 
+def auto_approve_if_ready(site_user_id: int):
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    su.discord_user_id,
+                    su.discord_username,
+                    su.verified_discord,
+                    al.discord_id,
+                    al.discord_username AS link_discord_username,
+                    al.steam_id,
+                    al.steam_name,
+                    r.id AS rider_id,
+                    r.mxb_name,
+                    r.class_name,
+                    r.guid
+                FROM site_users su
+                LEFT JOIN account_links al ON al.site_user_id = su.id
+                LEFT JOIN riders r
+                    ON r.discord_id = su.discord_user_id
+                    OR r.discord_user_id = su.discord_user_id
+                WHERE su.id = %s
+                LIMIT 1
+            """, (site_user_id,))
+            row = cur.fetchone()
+
+            if not row:
+                return False
+
+            has_discord = bool(row["verified_discord"] and row["discord_user_id"])
+            has_steam = bool(row["steam_id"])
+            has_rider = bool(row["mxb_name"] and row["class_name"])
+
+            if has_discord and has_steam and has_rider:
+                cur.execute("""
+                    UPDATE account_links
+                    SET approved = TRUE,
+                        auto_approved = TRUE,
+                        link_status = 'approved'
+                    WHERE site_user_id = %s
+                """, (site_user_id,))
+
+                cur.execute("""
+                    UPDATE riders
+                    SET approved = TRUE,
+                        auto_approved = TRUE,
+                        is_linked = TRUE,
+                        discord_user_id = %s,
+                        discord_username = %s,
+                        steam_id = %s
+                    WHERE discord_id = %s
+                       OR discord_user_id = %s
+                """, (
+                    row["discord_user_id"],
+                    row["discord_username"] or row["link_discord_username"],
+                    row["steam_id"],
+                    row["discord_user_id"],
+                    row["discord_user_id"],
+                ))
+
+                conn.commit()
+                return True
+
+    return False
+
+
 @app.route("/")
 def home():
     with db() as conn:
@@ -354,6 +420,7 @@ def auth_discord_callback():
             conn.commit()
 
     session["site_user_id"] = user_id
+    auto_approve_if_ready(user_id)
     flash("Logged in with Discord successfully.")
     return redirect(url_for("dashboard"))
 
@@ -418,16 +485,18 @@ def auth_steam_callback():
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO account_links (
-                    site_user_id, steam_id, link_status, approved
+                    site_user_id, steam_id, link_status, approved, auto_approved
                 )
-                VALUES (%s, %s, 'pending', FALSE)
+                VALUES (%s, %s, 'pending', FALSE, FALSE)
                 ON CONFLICT (site_user_id) DO UPDATE SET
                     steam_id = EXCLUDED.steam_id,
                     link_status = 'pending',
-                    approved = FALSE
+                    approved = FALSE,
+                    auto_approved = FALSE
             """, (user["id"], steam_id))
             conn.commit()
 
+    auto_approve_if_ready(user["id"])
     flash(f"Steam account linked: {steam_id}")
     return redirect(url_for("link_accounts"))
 
@@ -478,6 +547,7 @@ def dashboard():
                         class_name,
                         is_linked,
                         approved,
+                        auto_approved,
                         created_at
                     FROM riders
                     WHERE discord_id = %s
@@ -522,25 +592,32 @@ def link_accounts():
         rider_class = request.form.get("rider_class", "").strip().upper()
         rider_guid = request.form.get("rider_guid", "").strip()
 
-        if not discord_id or not discord_username or not steam_id or not steam_name:
-            flash("Discord and Steam fields are required.")
+        if not discord_id or not discord_username:
+            flash("Discord login is required.")
             return redirect(url_for("link_accounts"))
 
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO account_links (
-                        site_user_id, discord_id, discord_username, steam_id, steam_name, link_status, approved
+                        site_user_id, discord_id, discord_username, steam_id, steam_name, link_status, approved, auto_approved
                     )
-                    VALUES (%s, %s, %s, %s, %s, 'pending', FALSE)
+                    VALUES (%s, %s, %s, %s, %s, 'pending', FALSE, FALSE)
                     ON CONFLICT (site_user_id) DO UPDATE SET
                         discord_id = EXCLUDED.discord_id,
                         discord_username = EXCLUDED.discord_username,
-                        steam_id = EXCLUDED.steam_id,
-                        steam_name = EXCLUDED.steam_name,
+                        steam_id = COALESCE(EXCLUDED.steam_id, account_links.steam_id),
+                        steam_name = COALESCE(EXCLUDED.steam_name, account_links.steam_name),
                         link_status = 'pending',
-                        approved = FALSE
-                """, (user["id"], discord_id, discord_username, steam_id, steam_name))
+                        approved = FALSE,
+                        auto_approved = FALSE
+                """, (
+                    user["id"],
+                    discord_id,
+                    discord_username,
+                    steam_id if steam_id else None,
+                    steam_name if steam_name else None,
+                ))
 
                 if rider_name and rider_class:
                     cur.execute("""
@@ -553,25 +630,27 @@ def link_accounts():
                             steam_id,
                             class_name,
                             is_linked,
-                            approved
+                            approved,
+                            auto_approved
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, FALSE)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, FALSE, FALSE)
                         ON CONFLICT (discord_id) DO UPDATE SET
                             discord_user_id = EXCLUDED.discord_user_id,
                             discord_username = EXCLUDED.discord_username,
                             mxb_name = EXCLUDED.mxb_name,
                             guid = EXCLUDED.guid,
-                            steam_id = EXCLUDED.steam_id,
+                            steam_id = COALESCE(EXCLUDED.steam_id, riders.steam_id),
                             class_name = EXCLUDED.class_name,
                             is_linked = FALSE,
-                            approved = FALSE
+                            approved = FALSE,
+                            auto_approved = FALSE
                     """, (
                         discord_id,
                         discord_id,
                         discord_username,
                         rider_name,
                         rider_guid if rider_guid else None,
-                        steam_id,
+                        steam_id if steam_id else None,
                         rider_class
                     ))
                 else:
@@ -579,16 +658,18 @@ def link_accounts():
                         UPDATE riders
                         SET discord_user_id = %s,
                             discord_username = %s,
-                            steam_id = %s,
+                            steam_id = COALESCE(%s, steam_id),
                             is_linked = FALSE,
-                            approved = FALSE
+                            approved = FALSE,
+                            auto_approved = FALSE
                         WHERE discord_id = %s
                            OR discord_user_id = %s
-                    """, (discord_id, discord_username, steam_id, discord_id, discord_id))
+                    """, (discord_id, discord_username, steam_id if steam_id else None, discord_id, discord_id))
 
                 conn.commit()
 
-        flash("Link request saved. Waiting for admin approval.")
+        auto_approve_if_ready(user["id"])
+        flash("Link details saved.")
         return redirect(url_for("link_accounts"))
 
     link_data = None
@@ -622,6 +703,7 @@ def link_accounts():
                         class_name,
                         is_linked,
                         approved,
+                        auto_approved,
                         created_at
                     FROM riders
                     WHERE discord_id = %s
