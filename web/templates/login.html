@@ -3,13 +3,18 @@
 {% block content %}
 <div class="card">
     <h1>Login</h1>
+    <p class="subtle">Log in to your 12 O'Clock Boyz website account.</p>
 
     <form method="POST">
-        <label>Email</label>
-        <input type="email" name="email" required>
+        <div class="form-row">
+            <label>Email</label>
+            <input type="email" name="email" required>
+        </div>
 
-        <label>Password</label>
-        <input type="password" name="password" required>
+        <div class="form-row">
+            <label>Password</label>
+            <input type="password" name="password" required>
+        </div>
 
         <button class="btn" type="submit">Login</button>
     </form>
