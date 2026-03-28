@@ -41,44 +41,17 @@
 </div>
 
 <div class="card">
-    <h2>Rider Details</h2>
-
-    {% if rider_data %}
-        <div class="pill">Rider: {{ rider_data.mxb_name }}</div>
-        <div class="pill">Class: {{ rider_data.class_name }}</div>
-
-        {% if rider_data.guid %}
-            <div class="pill">GUID Saved</div>
-        {% endif %}
-
-        {% if rider_data.is_linked %}
-            <div class="pill">Linked: Yes</div>
-        {% else %}
-            <div class="pill">Linked: No</div>
-        {% endif %}
-
-        {% if rider_data.approved %}
-            <div class="pill">Approved: Yes</div>
-        {% else %}
-            <div class="pill">Approved: No</div>
-        {% endif %}
-    {% else %}
-        <p>No rider details saved yet.</p>
-    {% endif %}
-</div>
-
-<div class="card">
     <h2>Submit or Update Link Request</h2>
 
     <form method="POST">
         <div class="form-row">
             <label>Discord ID</label>
-            <input type="text" name="discord_id" value="{{ link_data.discord_id if link_data else '' }}" required>
+            <input type="text" name="discord_id" value="{{ oauth_discord_id or (link_data.discord_id if link_data else '') }}" required>
         </div>
 
         <div class="form-row">
             <label>Discord Username</label>
-            <input type="text" name="discord_username" value="{{ link_data.discord_username if link_data else '' }}" required>
+            <input type="text" name="discord_username" value="{{ oauth_discord_username or (link_data.discord_username if link_data else '') }}" required>
         </div>
 
         <div class="form-row">
