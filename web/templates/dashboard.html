@@ -3,87 +3,92 @@
 {% block content %}
 <div class="card">
     <h1>Dashboard</h1>
-    <p class="subtle">Welcome, {{ user.username }}</p>
+    <p class="subtle">Welcome, {{ user.discord_username or user.username }}</p>
 </div>
 
-<div class="card">
-    <h2>Website Account</h2>
-    <div class="pill">Username: {{ user.username }}</div>
-    <div class="pill">Email: {{ user.email }}</div>
-</div>
+<div class="stats">
+    <div class="card">
+        <div class="subtle">Discord Verified</div>
+        <div class="stat-number" style="font-size:24px;">
+            {% if user.verified_discord %}Yes{% else %}No{% endif %}
+        </div>
+    </div>
 
-<div class="card">
-    <h2>Link Status</h2>
+    <div class="card">
+        <div class="subtle">Website Approval</div>
+        <div class="stat-number" style="font-size:24px;">
+            {% if link_data and link_data.approved %}Approved{% elif link_data %}Pending{% else %}Missing{% endif %}
+        </div>
+    </div>
 
-    {% if link_data %}
-        <div class="pill">Website Link Status: {{ link_data.link_status }}</div>
-
-        {% if link_data.approved %}
-            <div class="pill">Approved: Yes</div>
-        {% else %}
-            <div class="pill">Approved: No</div>
-        {% endif %}
-
-        {% if link_data.discord_username %}
-            <div class="pill">Discord: {{ link_data.discord_username }}</div>
-        {% endif %}
-
-        {% if link_data.discord_id %}
-            <div class="pill">Discord ID: {{ link_data.discord_id }}</div>
-        {% endif %}
-
-        {% if link_data.steam_name %}
-            <div class="pill">Steam Name: {{ link_data.steam_name }}</div>
-        {% endif %}
-
-        {% if link_data.steam_id %}
-            <div class="pill">Steam ID: {{ link_data.steam_id }}</div>
-        {% endif %}
-    {% else %}
-        <p>No account links saved yet.</p>
-    {% endif %}
-
-    <div style="margin-top: 14px;">
-        <a class="btn" href="/link-accounts">Update Link Details</a>
+    <div class="card">
+        <div class="subtle">Rider Status</div>
+        <div class="stat-number" style="font-size:24px;">
+            {% if rider_data and rider_data.approved and rider_data.is_linked %}Race Ready{% elif rider_data %}Incomplete{% else %}Missing{% endif %}
+        </div>
     </div>
 </div>
 
 <div class="card">
-    <h2>Rider Profile</h2>
+    <h2>Account Status</h2>
+
+    <div class="pill">Discord: {{ user.discord_username or "Not linked" }}</div>
+    <div class="pill">Email: {{ user.email }}</div>
+
+    {% if link_data %}
+        <div class="pill">Link Status: {{ link_data.link_status }}</div>
+        <div class="pill">Steam ID: {{ link_data.steam_id or "Not linked" }}</div>
+    {% endif %}
 
     {% if rider_data %}
-        <div class="pill">Rider Name: {{ rider_data.mxb_name }}</div>
+        <div class="pill">Rider: {{ rider_data.mxb_name }}</div>
         <div class="pill">Class: {{ rider_data.class_name }}</div>
+        <div class="pill">GUID: {{ "Saved" if rider_data.guid else "Missing" }}</div>
+        <div class="pill">Linked: {{ "Yes" if rider_data.is_linked else "No" }}</div>
+        <div class="pill">Approved: {{ "Yes" if rider_data.approved else "No" }}</div>
+    {% endif %}
 
-        {% if rider_data.guid %}
-            <div class="pill">GUID Saved</div>
-        {% endif %}
+    <div style="margin-top:14px;">
+        <a class="btn" href="/link-accounts">Update Link Details</a>
+        <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
+    </div>
+</div>
 
-        {% if rider_data.is_linked %}
-            <div class="pill">Linked: Yes</div>
-        {% else %}
-            <div class="pill">Linked: No</div>
-        {% endif %}
-
-        {% if rider_data.approved %}
-            <div class="pill">Bot Approved: Yes</div>
-        {% else %}
-            <div class="pill">Bot Approved: No</div>
-        {% endif %}
+<div class="card">
+    <h2>1W Status</h2>
+    {% if one_w_roles %}
+        {% for role in one_w_roles %}
+            <div class="pill">1W {{ role.series }} {{ role.class_name }} - {{ role.pts }} pts</div>
+        {% endfor %}
     {% else %}
-        <p>No rider profile matched yet.</p>
+        <p>No current 1W title yet.</p>
     {% endif %}
 </div>
 
 <div class="card">
-    <h2>What To Do Next</h2>
-    <ul>
-        <li>Sign up and log in to the website</li>
-        <li>Open Link Accounts and submit your Discord + Steam + rider details</li>
-        <li>Wait for admin approval</li>
-        <li>Once approved, your Discord roles will sync</li>
-        <li>After approval, you can join official events in your class</li>
-    </ul>
+    <h2>Next Event</h2>
+    {% if next_event %}
+        <div class="pill">Event: {{ next_event.name }}</div>
+        <div class="pill">Series: {{ next_event.series }}</div>
+        <div class="pill">Class: {{ next_event.class_name }}</div>
+        <div class="pill">Stage: {{ next_event.race_stage }}</div>
+        <div class="pill">Queue: {{ "Open" if next_event.queue_open else "Closed" }}</div>
+        <div class="pill">Status: {{ next_event.status }}</div>
+    {% else %}
+        <p>No pending event found.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>How to Join Official Races</h2>
+    <ol style="line-height:1.8; color:#dddddd; padding-left:20px;">
+        <li>Log in with Discord</li>
+        <li>Link Steam using the Steam login button</li>
+        <li>Submit your MX Bikes rider name, class, and GUID</li>
+        <li>Wait for your dashboard to show Race Ready</li>
+        <li>Join the Discord server</li>
+        <li>When queue is open, react in Discord to receive the server password</li>
+    </ol>
 </div>
 
 <div class="card">
@@ -98,6 +103,7 @@
                     <th>Series</th>
                     <th>Class</th>
                     <th>Stage</th>
+                    <th>Status</th>
                 </tr>
             </thead>
             <tbody>
@@ -108,6 +114,7 @@
                     <td>{{ e.series }}</td>
                     <td>{{ e.class_name }}</td>
                     <td>{{ e.race_stage }}</td>
+                    <td>{{ e.status or "pending" }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
