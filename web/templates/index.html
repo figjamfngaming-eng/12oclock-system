@@ -3,9 +3,7 @@
 {% block content %}
 <div class="card">
     <h1>League Control Center</h1>
-    <p class="subtle">
-        MXGP and SMX race system with riders, events, gates, results, and leaderboard.
-    </p>
+    <p class="subtle">MX league system running.</p>
 </div>
 
 <div class="stats">
@@ -13,7 +11,6 @@
         <div class="subtle">Registered Riders</div>
         <div class="stat-number">{{ riders_total }}</div>
     </div>
-
     <div class="card">
         <div class="subtle">Total Events</div>
         <div class="stat-number">{{ events_total }}</div>
@@ -22,7 +19,6 @@
 
 <div class="card">
     <h2>Latest Events</h2>
-
     {% if latest_events %}
     <table>
         <thead>
