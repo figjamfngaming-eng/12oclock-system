@@ -3,36 +3,70 @@
 {% block content %}
 <div class="card">
     <h1>Link Accounts</h1>
-    <p class="subtle">Link your Steam and Discord to race officially.</p>
+    <p class="subtle">
+        Link your Discord and Steam so you can be approved for official races.
+    </p>
 </div>
 
 <div class="card">
-    <h3>Steam Linking</h3>
+    <h2>Current Link Status</h2>
 
-    <a class="btn" href="/auth/steam">Link Steam (Official Login)</a>
+    {% if link_data %}
+        <div class="pill">Status: {{ link_data.link_status }}</div>
 
-    {% if link_data and link_data.steam_id %}
-        <div style="margin-top:10px;">
+        {% if link_data.discord_username %}
+            <div class="pill">Discord: {{ link_data.discord_username }}</div>
+        {% endif %}
+
+        {% if link_data.discord_id %}
+            <div class="pill">Discord ID: {{ link_data.discord_id }}</div>
+        {% endif %}
+
+        {% if link_data.steam_name %}
+            <div class="pill">Steam Name: {{ link_data.steam_name }}</div>
+        {% endif %}
+
+        {% if link_data.steam_id %}
             <div class="pill">Steam ID: {{ link_data.steam_id }}</div>
-            <div class="pill">Status: {{ link_data.link_status }}</div>
-        </div>
+        {% endif %}
+    {% else %}
+        <p>No account link saved yet.</p>
     {% endif %}
 </div>
 
 <div class="card">
-    <h3>Discord Linking (Manual)</h3>
+    <h2>Submit Link Request</h2>
 
     <form method="POST">
-        <label>Discord ID</label>
-        <input name="discord_id" value="{{ link_data.discord_id if link_data else '' }}">
+        <div class="form-row">
+            <label>Discord ID</label>
+            <input type="text" name="discord_id" value="{{ link_data.discord_id if link_data else '' }}" required>
+        </div>
 
-        <label>Discord Username</label>
-        <input name="discord_username" value="{{ link_data.discord_username if link_data else '' }}">
+        <div class="form-row">
+            <label>Discord Username</label>
+            <input type="text" name="discord_username" value="{{ link_data.discord_username if link_data else '' }}" required>
+        </div>
 
-        <label>Steam Name</label>
-        <input name="steam_name" value="{{ link_data.steam_name if link_data else '' }}">
+        <div class="form-row">
+            <label>Steam ID</label>
+            <input type="text" name="steam_id" value="{{ link_data.steam_id if link_data else '' }}" required>
+        </div>
 
-        <button class="btn" type="submit">Save</button>
+        <div class="form-row">
+            <label>Steam Name</label>
+            <input type="text" name="steam_name" value="{{ link_data.steam_name if link_data else '' }}" required>
+        </div>
+
+        <button class="btn" type="submit">Save Link Request</button>
     </form>
+</div>
+
+<div class="card">
+    <h2>Discord Server</h2>
+    <p class="subtle">
+        Join the Discord server before racing officially.
+    </p>
+    <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
 </div>
 {% endblock %}
