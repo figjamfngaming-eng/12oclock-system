@@ -3,7 +3,7 @@
 {% block content %}
 <div class="card">
     <h1>Login</h1>
-    <p class="subtle">Log in to your 12 O'Clock Boyz website account.</p>
+    <p class="subtle">Log in with email/password or Discord.</p>
 
     <form method="POST">
         <div class="form-row">
@@ -18,5 +18,9 @@
 
         <button class="btn" type="submit">Login</button>
     </form>
+
+    <div style="margin-top: 20px;">
+        <a class="btn btn-discord" href="/login/discord">Login with Discord</a>
+    </div>
 </div>
 {% endblock %}
