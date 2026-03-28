@@ -6,14 +6,24 @@ from psycopg2.extras import RealDictCursor
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))
+
+ROLE_LINKED_ID = int(os.getenv("ROLE_LINKED_ID", "0"))
+ROLE_SM85_ID = int(os.getenv("ROLE_SM85_ID", "0"))
+ROLE_SM125_ID = int(os.getenv("ROLE_SM125_ID", "0"))
+ROLE_250F_ID = int(os.getenv("ROLE_250F_ID", "0"))
+ROLE_450_ID = int(os.getenv("ROLE_450_ID", "0"))
 
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing")
+if not DISCORD_GUILD_ID:
+    raise RuntimeError("DISCORD_GUILD_ID is missing")
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -33,6 +43,75 @@ def points_for_position(position: int) -> int:
     return table.get(position, 0)
 
 
+def class_role_id(class_name: str) -> int:
+    class_name = (class_name or "").upper()
+    if class_name == "SM85":
+        return ROLE_SM85_ID
+    if class_name == "SM125":
+        return ROLE_SM125_ID
+    if class_name == "250F":
+        return ROLE_250F_ID
+    if class_name == "450":
+        return ROLE_450_ID
+    return 0
+
+
+async def sync_member_roles_for_discord_user(discord_user_id: str):
+    guild = bot.get_guild(DISCORD_GUILD_ID)
+    if guild is None:
+        guild = await bot.fetch_guild(DISCORD_GUILD_ID)
+
+    member = guild.get_member(int(discord_user_id))
+    if member is None:
+        member = await guild.fetch_member(int(discord_user_id))
+
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    al.discord_id,
+                    al.discord_username,
+                    al.approved AS link_approved,
+                    r.class_name,
+                    r.approved AS rider_approved
+                FROM account_links al
+                LEFT JOIN riders r ON r.discord_user_id = al.discord_id
+                WHERE al.discord_id = %s
+            """, (discord_user_id,))
+            row = cur.fetchone()
+
+    if not row:
+        return False, "No linked account found."
+
+    if not row["link_approved"]:
+        return False, "Link is not approved yet."
+
+    roles_to_add = []
+    roles_to_remove = []
+
+    linked_role = guild.get_role(ROLE_LINKED_ID) if ROLE_LINKED_ID else None
+    class_role = guild.get_role(class_role_id(row["class_name"])) if class_role_id(row["class_name"]) else None
+
+    if linked_role and linked_role not in member.roles:
+        roles_to_add.append(linked_role)
+
+    class_role_ids = {ROLE_SM85_ID, ROLE_SM125_ID, ROLE_250F_ID, ROLE_450_ID}
+    for role in member.roles:
+        if role.id in class_role_ids and (not class_role or role.id != class_role.id):
+            roles_to_remove.append(role)
+
+    if class_role and class_role not in member.roles:
+        roles_to_add.append(class_role)
+
+    if roles_to_remove:
+        await member.remove_roles(*roles_to_remove, reason="Updating linked class role")
+
+    if roles_to_add:
+        await member.add_roles(*roles_to_add, reason="Approved website account link")
+
+    return True, "Roles synced."
+
+
 @bot.event
 async def on_ready():
     print(f"Bot online as {bot.user}")
@@ -49,40 +128,62 @@ async def register(ctx, name: str, guid: str, cls: str):
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO riders (discord_id, mxb_name, guid, class_name)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO riders (discord_id, discord_user_id, mxb_name, guid, class_name, approved)
+                    VALUES (%s, %s, %s, %s, %s, FALSE)
                     ON CONFLICT (discord_id) DO UPDATE SET
+                        discord_user_id = EXCLUDED.discord_user_id,
                         mxb_name = EXCLUDED.mxb_name,
                         guid = EXCLUDED.guid,
                         class_name = EXCLUDED.class_name
-                """, (str(ctx.author.id), name, guid, cls))
+                """, (str(ctx.author.id), str(ctx.author.id), name, guid, cls))
                 conn.commit()
+
         await ctx.send(f"✅ Registered {name} in class {cls}")
     except Exception as e:
         await ctx.send(f"❌ register failed: {e}")
 
 
 @bot.command()
-async def riders(ctx):
+async def approve_link(ctx, discord_user_id: str):
     try:
-        with db() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT id, mxb_name, class_name
-                    FROM riders
-                    ORDER BY id DESC
-                    LIMIT 20
-                """)
-                rows = cur.fetchall()
-
-        if not rows:
-            await ctx.send("No riders found.")
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ Admin only.")
             return
 
-        msg = "\n".join([f"#{r['id']} - {r['mxb_name']} | {r['class_name']}" for r in rows])
-        await ctx.send(msg)
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE account_links
+                    SET approved = TRUE, link_status = 'approved'
+                    WHERE discord_id = %s
+                """, (discord_user_id,))
+                cur.execute("""
+                    UPDATE riders
+                    SET approved = TRUE, discord_user_id = %s
+                    WHERE discord_id = %s
+                """, (discord_user_id, discord_user_id))
+                conn.commit()
+
+        ok, msg = await sync_member_roles_for_discord_user(discord_user_id)
+        if ok:
+            await ctx.send(f"✅ Link approved and roles synced for {discord_user_id}")
+        else:
+            await ctx.send(f"⚠️ Link approved but role sync issue: {msg}")
     except Exception as e:
-        await ctx.send(f"❌ riders failed: {e}")
+        await ctx.send(f"❌ approve_link failed: {e}")
+
+
+@bot.command()
+async def sync_roles(ctx, discord_user_id: str = None):
+    try:
+        target_id = discord_user_id or str(ctx.author.id)
+        ok, msg = await sync_member_roles_for_discord_user(target_id)
+        if ok:
+            await ctx.send(f"✅ Roles synced for {target_id}")
+        else:
+            await ctx.send(f"❌ sync_roles failed: {msg}")
+    except Exception as e:
+        await ctx.send(f"❌ sync_roles failed: {e}")
 
 
 @bot.command()
@@ -109,41 +210,38 @@ async def create_event(ctx, *, args: str):
 
 
 @bot.command()
-async def events(ctx):
-    try:
-        with db() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT id, name, class_name, race_stage
-                    FROM events
-                    ORDER BY id DESC
-                    LIMIT 20
-                """)
-                rows = cur.fetchall()
-
-        if not rows:
-            await ctx.send("No events found.")
-            return
-
-        msg = "\n".join([
-            f"#{r['id']} - {r['name']} | {r['class_name']} | {r['race_stage']}"
-            for r in rows
-        ])
-        await ctx.send(msg)
-    except Exception as e:
-        await ctx.send(f"❌ events failed: {e}")
-
-
-@bot.command()
 async def join(ctx, event_id: int):
     try:
         with db() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT id FROM riders WHERE discord_id = %s", (str(ctx.author.id),))
+                cur.execute("""
+                    SELECT id, approved, class_name
+                    FROM riders
+                    WHERE discord_id = %s
+                """, (str(ctx.author.id),))
                 rider = cur.fetchone()
 
                 if not rider:
                     await ctx.send("❌ Register first with !register")
+                    return
+
+                if not rider["approved"]:
+                    await ctx.send("❌ Your account is not linked/approved yet.")
+                    return
+
+                cur.execute("""
+                    SELECT class_name
+                    FROM events
+                    WHERE id = %s
+                """, (event_id,))
+                event = cur.fetchone()
+
+                if not event:
+                    await ctx.send("❌ Event not found.")
+                    return
+
+                if (event["class_name"] or "").upper() != (rider["class_name"] or "").upper():
+                    await ctx.send(f"❌ Wrong class. Event is {event['class_name']}, you are {rider['class_name']}.")
                     return
 
                 cur.execute("""
