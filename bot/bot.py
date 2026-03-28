@@ -1,4 +1,6 @@
 import os
+import random
+import string
 import discord
 from discord.ext import commands
 import psycopg2
@@ -7,6 +9,10 @@ from psycopg2.extras import RealDictCursor
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))
+
+RACE_ANNOUNCEMENTS_CHANNEL_ID = int(os.getenv("RACE_ANNOUNCEMENTS_CHANNEL_ID", "0"))
+QUEUE_CHANNEL_ID = int(os.getenv("QUEUE_CHANNEL_ID", "0"))
+EVENT_RESULTS_CHANNEL_ID = int(os.getenv("EVENT_RESULTS_CHANNEL_ID", "0"))
 
 ROLE_LINKED_ID = int(os.getenv("ROLE_LINKED_ID", "0"))
 ROLE_SM85_ID = int(os.getenv("ROLE_SM85_ID", "0"))
@@ -33,12 +39,18 @@ if not DISCORD_GUILD_ID:
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 def db():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+
+def random_password(length: int = 8) -> str:
+    chars = string.ascii_uppercase + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
 
 
 def points_for_position(position: int) -> int:
@@ -99,6 +111,18 @@ async def get_guild():
     return guild
 
 
+async def get_channel(channel_id: int):
+    if not channel_id:
+        return None
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            return None
+    return channel
+
+
 async def get_member_safe(guild: discord.Guild, discord_user_id: str):
     try:
         member = guild.get_member(int(discord_user_id))
@@ -119,21 +143,14 @@ async def sync_member_roles_for_discord_user(discord_user_id: str):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT
-                    su.discord_user_id AS site_discord_user_id,
-                    su.discord_username AS site_discord_username,
+                    su.discord_user_id,
                     su.verified_discord,
-                    al.discord_id,
-                    al.discord_username,
-                    al.link_status,
                     al.approved AS link_approved,
-                    r.id AS rider_id,
                     r.class_name,
                     r.approved AS rider_approved,
-                    r.is_linked,
-                    r.auto_approved
+                    r.is_linked
                 FROM site_users su
-                LEFT JOIN account_links al
-                    ON al.site_user_id = su.id
+                LEFT JOIN account_links al ON al.site_user_id = su.id
                 LEFT JOIN riders r
                     ON r.discord_user_id = su.discord_user_id
                     OR r.discord_id = su.discord_user_id
@@ -147,15 +164,12 @@ async def sync_member_roles_for_discord_user(discord_user_id: str):
 
     if not row:
         return False, "No linked account found."
-
     if not row["verified_discord"]:
-        return False, "Discord OAuth not verified."
-
+        return False, "Discord not verified."
     if not row["link_approved"]:
-        return False, "Website link is not approved."
-
-    if not row["rider_approved"]:
-        return False, "Rider is not approved."
+        return False, "Website link not approved."
+    if not row["rider_approved"] or not row["is_linked"]:
+        return False, "Rider not approved."
 
     linked_role = guild.get_role(ROLE_LINKED_ID) if ROLE_LINKED_ID else None
     class_role = guild.get_role(class_role_id(row["class_name"])) if class_role_id(row["class_name"]) else None
@@ -175,7 +189,7 @@ async def sync_member_roles_for_discord_user(discord_user_id: str):
         roles_to_add.append(class_role)
 
     if roles_to_remove:
-        await member.remove_roles(*roles_to_remove, reason="Updating class role sync")
+        await member.remove_roles(*roles_to_remove, reason="Class role sync")
 
     if roles_to_add:
         await member.add_roles(*roles_to_add, reason="Auto approved website link")
@@ -200,6 +214,7 @@ async def sync_all_approved_members():
                 WHERE su.verified_discord = TRUE
                   AND COALESCE(al.approved, FALSE) = TRUE
                   AND COALESCE(r.approved, FALSE) = TRUE
+                  AND COALESCE(r.is_linked, FALSE) = TRUE
                   AND COALESCE(su.discord_user_id, al.discord_id, r.discord_user_id, r.discord_id) IS NOT NULL
             """)
             rows = cur.fetchall()
@@ -245,24 +260,35 @@ async def update_one_w_role_for_series_class(series: str, class_name: str):
     if not leader:
         return False, f"No points found for {series} {class_name}"
 
-    target_discord_id = leader["discord_user_id"]
-    if not target_discord_id:
-        return False, "Leader has no Discord ID saved"
-
-    member = await get_member_safe(guild, target_discord_id)
+    member = await get_member_safe(guild, leader["discord_user_id"])
     if member is None:
         return False, "Leader is not in the Discord server"
 
-    members_with_role = list(target_role.members)
-    to_remove = [m for m in members_with_role if m.id != member.id]
-
-    for m in to_remove:
-        await m.remove_roles(target_role, reason=f"1W transferred for {series} {class_name}")
+    for m in list(target_role.members):
+        if m.id != member.id:
+            await m.remove_roles(target_role, reason=f"1W transferred for {series} {class_name}")
 
     if target_role not in member.roles:
         await member.add_roles(target_role, reason=f"Current points leader for {series} {class_name}")
 
     return True, f"1W updated: {leader['mxb_name']} now holds {series} {class_name}"
+
+
+async def is_user_approved(discord_user_id: str):
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    COALESCE(r.approved, FALSE) AS rider_approved,
+                    COALESCE(r.is_linked, FALSE) AS is_linked
+                FROM riders r
+                WHERE r.discord_id = %s
+                   OR r.discord_user_id = %s
+                LIMIT 1
+            """, (discord_user_id, discord_user_id))
+            row = cur.fetchone()
+
+    return bool(row and row["rider_approved"] and row["is_linked"])
 
 
 @bot.event
@@ -322,32 +348,6 @@ async def register(ctx, name: str, guid: str, cls: str):
 
 
 @bot.command()
-async def riders(ctx):
-    try:
-        with db() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT id, mxb_name, class_name, approved, is_linked, auto_approved
-                    FROM riders
-                    ORDER BY id DESC
-                    LIMIT 20
-                """)
-                rows = cur.fetchall()
-
-        if not rows:
-            await ctx.send("No riders found.")
-            return
-
-        msg = "\n".join([
-            f"#{r['id']} - {r['mxb_name']} | {r['class_name']} | approved={r['approved']} | linked={r['is_linked']} | auto={r['auto_approved']}"
-            for r in rows
-        ])
-        await ctx.send(msg)
-    except Exception as e:
-        await ctx.send(f"❌ riders failed: {e}")
-
-
-@bot.command()
 async def create_event(ctx, *, args: str):
     try:
         parts = args.split("|")
@@ -362,8 +362,8 @@ async def create_event(ctx, *, args: str):
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO events (name, series, class_name, race_stage)
-                    VALUES (%s, %s, %s, 'qualifying')
+                    INSERT INTO events (name, series, class_name, race_stage, status, queue_open)
+                    VALUES (%s, %s, %s, 'qualifying', 'pending', FALSE)
                 """, (name, series, cls))
                 conn.commit()
 
@@ -378,7 +378,7 @@ async def events(ctx):
         with db() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
+                    SELECT id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, status
                     FROM events
                     ORDER BY id DESC
                     LIMIT 20
@@ -390,7 +390,7 @@ async def events(ctx):
             return
 
         msg = "\n".join([
-            f"#{r['id']} - {r['name']} | {r['series']} | {r['class_name']} | {r['race_stage']}"
+            f"#{r['id']} - {r['name']} | {r['series']} | {r['class_name']} | {r['race_stage']} | {r['status']}"
             for r in rows
         ])
         await ctx.send(msg)
@@ -407,7 +407,9 @@ async def join(ctx, event_id: int):
                     SELECT id, approved, class_name, is_linked
                     FROM riders
                     WHERE discord_id = %s
-                """, (str(ctx.author.id),))
+                       OR discord_user_id = %s
+                    LIMIT 1
+                """, (str(ctx.author.id), str(ctx.author.id)))
                 rider = cur.fetchone()
 
                 if not rider:
@@ -479,7 +481,7 @@ async def result(ctx, event_id: int, rider_id: int, position: int):
                 """, (event_id, rider_id, position, pts))
 
                 cur.execute("""
-                    SELECT COALESCE(series, 'MXGP') AS series, class_name
+                    SELECT COALESCE(series, 'MXGP') AS series, class_name, name
                     FROM events
                     WHERE id = %s
                 """, (event_id,))
@@ -487,15 +489,22 @@ async def result(ctx, event_id: int, rider_id: int, position: int):
 
                 conn.commit()
 
+        one_w_msg = ""
         if event:
             ok, msg = await update_one_w_role_for_series_class(event["series"], event["class_name"])
-            if ok:
-                await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}\n🏆 {msg}")
-            else:
-                await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}\n⚠️ {msg}")
-        else:
-            await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}")
+            one_w_msg = f"\n🏆 {msg}" if ok else f"\n⚠️ {msg}"
 
+            results_channel = await get_channel(EVENT_RESULTS_CHANNEL_ID)
+            if results_channel:
+                await results_channel.send(
+                    f"**Result Saved**\n"
+                    f"Event: {event['name']}\n"
+                    f"Rider ID: {rider_id}\n"
+                    f"Position: {position}\n"
+                    f"Points: {pts}{one_w_msg}"
+                )
+
+        await ctx.send(f"✅ Result saved | Rider #{rider_id} | Pos {position} | Points {pts}{one_w_msg}")
     except Exception as e:
         await ctx.send(f"❌ result failed: {e}")
 
@@ -533,8 +542,6 @@ async def leaderboard(ctx):
 @bot.command()
 async def update_1w(ctx, series: str, cls: str):
     try:
-        series = series.upper().strip()
-        cls = cls.upper().strip()
         ok, msg = await update_one_w_role_for_series_class(series, cls)
         if ok:
             await ctx.send(f"✅ {msg}")
@@ -602,6 +609,166 @@ async def sync_all_roles(ctx):
         await ctx.send(f"✅ Full sync done. Synced: {synced} | Skipped: {skipped}")
     except Exception as e:
         await ctx.send(f"❌ sync_all_roles failed: {e}")
+
+
+@bot.command()
+async def start_event(ctx, event_id: int):
+    try:
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ Admin only.")
+            return
+
+        password = random_password(8)
+
+        with db() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    UPDATE events
+                    SET race_password = %s,
+                        status = 'queue_open',
+                        queue_open = TRUE
+                    WHERE id = %s
+                    RETURNING id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage, race_password
+                """, (password, event_id))
+                event = cur.fetchone()
+                conn.commit()
+
+        if not event:
+            await ctx.send("❌ Event not found.")
+            return
+
+        ann_channel = await get_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID)
+        queue_channel = await get_channel(QUEUE_CHANNEL_ID)
+
+        text = (
+            f"**Race Queue Open**\n"
+            f"Event: {event['name']}\n"
+            f"Series: {event['series']}\n"
+            f"Class: {event['class_name']}\n"
+            f"Stage: {event['race_stage']}\n\n"
+            f"React with ✅ in the queue channel to receive the server password by DM.\n"
+            f"Only approved linked riders in the correct class can get the password."
+        )
+
+        if ann_channel:
+            await ann_channel.send(text)
+
+        if queue_channel:
+            msg = await queue_channel.send(
+                f"**Queue Open for {event['name']}**\n"
+                f"React with ✅ to receive the race password by DM."
+            )
+            await msg.add_reaction("✅")
+
+        await ctx.send(f"✅ Event #{event_id} started. Queue is open.")
+    except Exception as e:
+        await ctx.send(f"❌ start_event failed: {e}")
+
+
+@bot.command()
+async def end_event(ctx, event_id: int):
+    try:
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ Admin only.")
+            return
+
+        with db() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    UPDATE events
+                    SET status = 'finished',
+                        queue_open = FALSE
+                    WHERE id = %s
+                    RETURNING id, name, COALESCE(series, 'MXGP') AS series, class_name, race_stage
+                """, (event_id,))
+                event = cur.fetchone()
+                conn.commit()
+
+        if not event:
+            await ctx.send("❌ Event not found.")
+            return
+
+        ann_channel = await get_channel(RACE_ANNOUNCEMENTS_CHANNEL_ID)
+        if ann_channel:
+            await ann_channel.send(
+                f"**Event Finished**\n"
+                f"Event: {event['name']}\n"
+                f"Series: {event['series']}\n"
+                f"Class: {event['class_name']}\n"
+                f"Stage: {event['race_stage']}"
+            )
+
+        await ctx.send(f"✅ Event #{event_id} ended.")
+    except Exception as e:
+        await ctx.send(f"❌ end_event failed: {e}")
+
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    if payload.user_id == bot.user.id:
+        return
+    if QUEUE_CHANNEL_ID and payload.channel_id != QUEUE_CHANNEL_ID:
+        return
+
+    if str(payload.emoji) != "✅":
+        return
+
+    user_id = str(payload.user_id)
+
+    guild = await get_guild()
+    member = await get_member_safe(guild, user_id)
+    if member is None or member.bot:
+        return
+
+    approved = await is_user_approved(user_id)
+    if not approved:
+        try:
+            await member.send("❌ You are not approved and linked yet, so you cannot receive the race password.")
+        except Exception:
+            pass
+        return
+
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, name, class_name, race_password
+                FROM events
+                WHERE queue_open = TRUE
+                ORDER BY id DESC
+                LIMIT 1
+            """)
+            event = cur.fetchone()
+
+            if not event:
+                return
+
+            cur.execute("""
+                SELECT class_name
+                FROM riders
+                WHERE discord_id = %s
+                   OR discord_user_id = %s
+                LIMIT 1
+            """, (user_id, user_id))
+            rider = cur.fetchone()
+
+    if not rider:
+        return
+
+    if (rider["class_name"] or "").upper() != (event["class_name"] or "").upper():
+        try:
+            await member.send(f"❌ Wrong class. Current queue is for {event['class_name']}.")
+        except Exception:
+            pass
+        return
+
+    try:
+        await member.send(
+            f"✅ You are queued for **{event['name']}**\n"
+            f"Class: {event['class_name']}\n"
+            f"Server Password: **{event['race_password']}**"
+        )
+    except Exception:
+        pass
 
 
 bot.run(TOKEN)
