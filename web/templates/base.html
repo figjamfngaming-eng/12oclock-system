@@ -3,148 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>12 O'Clock Boyz</title>
+
+    <title>12 O’Clock Boyz | MX Bikes League</title>
+
+    <meta name="description" content="12 O’Clock Boyz is a competitive MX Bikes league with MXGP and SMX events, leaderboards, and 1W championship system.">
+    <meta name="keywords" content="mx bikes, mxb, mx bikes league, mx bikes server, mxgp mx bikes, smx mx bikes">
+
     <link rel="stylesheet" href="/static/css/style.css">
-    <style>
-        .navbar-flex {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-
-        .nav-left {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .user-box {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: #1a1a26;
-            border: 1px solid #2b2b3a;
-            border-radius: 12px;
-            padding: 10px 14px;
-        }
-
-        .user-box img {
-            width: 42px;
-            height: 42px;
-            border-radius: 50%;
-            object-fit: cover;
-            background: #111;
-        }
-
-        .user-meta {
-            display: flex;
-            flex-direction: column;
-            line-height: 1.2;
-        }
-
-        .user-name {
-            font-weight: bold;
-            color: #ffffff;
-        }
-
-        .user-sub {
-            font-size: 13px;
-            color: #bbbbc8;
-        }
-
-        .nav-right {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        @media (max-width: 800px) {
-            .navbar-flex {
-                align-items: flex-start;
-            }
-
-            .nav-right {
-                width: 100%;
-            }
-        }
-    </style>
 </head>
 <body>
-    <div class="topbar">
-        <div class="wrap">
-            <div class="navbar-flex">
-                <div class="nav-left">
-                    <div class="brand-row">
-                        <img src="/static/images/mxb-logo.png" alt="MX Bikes Logo">
-                        <img src="/static/images/12oclock-logo.png" alt="12 O'Clock Boyz Logo">
-                        <div class="brand">12 O'Clock Boyz</div>
-                    </div>
 
-                    <div class="nav">
-                        <a href="/">Home</a>
-                        <a href="/events">Events</a>
-                        <a href="/leaderboard">Leaderboard</a>
-                        <a href="/director">Director</a>
-                        <a href="/live">Live</a>
-                        <a href="/rules">Rules</a>
-                        <a href="/status">Status</a>
-                    </div>
-                </div>
+<!-- NAVBAR -->
+<div class="topbar">
+    <div class="wrap nav-flex">
 
-                <div class="nav-right">
-                    {% if logged_in_user %}
-                        <div class="user-box">
-                            {% if logged_in_user.discord_avatar %}
-                                <img src="{{ logged_in_user.discord_avatar }}" alt="Discord Avatar">
-                            {% else %}
-                                <img src="/static/images/12oclock-logo.png" alt="User Avatar">
-                            {% endif %}
-
-                            <div class="user-meta">
-                                <div class="user-name">
-                                    {{ logged_in_user.discord_username or logged_in_user.username }}
-                                </div>
-                                <div class="user-sub">
-                                    {% if logged_in_user.verified_discord %}
-                                        Discord verified
-                                    {% else %}
-                                        Website account
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </div>
-
-                        <a class="btn" href="/dashboard">Dashboard</a>
-                        <a class="btn" href="/link-accounts">Link Accounts</a>
-                        <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
-                        <a class="btn btn-danger" href="/logout">Logout</a>
-                    {% else %}
-                        <a class="btn" href="/signup">Sign Up</a>
-                        <a class="btn" href="/login">Login</a>
-                        <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
-                    {% endif %}
-                </div>
-            </div>
+        <div class="brand">
+            12 O’Clock Boyz
         </div>
-    </div>
 
-    <div class="wrap">
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                {% for message in messages %}
-                    <div class="flash">{{ message }}</div>
-                {% endfor %}
+        <div class="nav">
+            <a href="/">Home</a>
+            <a href="/events">Events</a>
+            <a href="/leaderboard">Leaderboard</a>
+            <a href="/rules">Rules</a>
+            <a href="/live">Live</a>
+        </div>
+
+        <div class="nav-right">
+            {% if logged_in_user %}
+                <span class="pill">
+                    {{ logged_in_user.discord_username or logged_in_user.username }}
+                </span>
+
+                <a class="btn" href="/dashboard">Dashboard</a>
+                <a class="btn" href="/link-accounts">Link</a>
+                <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Discord</a>
+                <a class="btn btn-danger" href="/logout">Logout</a>
+            {% else %}
+                <a class="btn" href="/signup">Sign Up</a>
+                <a class="btn" href="/login">Login</a>
+                <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Discord</a>
             {% endif %}
-        {% endwith %}
+        </div>
 
-        {% block content %}{% endblock %}
-
-        <footer>
-            © 2026 12 O'Clock Boyz. All rights reserved. MX Bikes names, logos, and related content belong to their respective owners.
-        </footer>
     </div>
+</div>
+
+<!-- CONTENT -->
+<div class="wrap">
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+
+    <footer>
+        © 2026 12 O’Clock Boyz — All Rights Reserved
+    </footer>
+
+</div>
+
 </body>
 </html>
