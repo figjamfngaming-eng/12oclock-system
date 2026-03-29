@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-
 {% block content %}
+
 <div class="card">
     <h1>Login</h1>
     <p class="subtle">Log in with email/password or Discord.</p>
@@ -22,5 +22,11 @@
     <div style="margin-top: 20px;">
         <a class="btn btn-discord" href="/login/discord">Login with Discord</a>
     </div>
+
+    <div style="margin-top: 16px;">
+        <p class="subtle">No account yet?</p>
+        <a class="link" href="/signup">Create one here</a>
+    </div>
 </div>
+
 {% endblock %}
