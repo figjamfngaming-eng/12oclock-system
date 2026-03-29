@@ -1,126 +1,61 @@
 {% extends "base.html" %}
-
 {% block content %}
+
 <div class="card">
     <h1>Dashboard</h1>
-    <p class="subtle">Welcome, {{ user.discord_username or user.username }}</p>
-</div>
 
-<div class="stats">
-    <div class="card">
-        <div class="subtle">Discord Verified</div>
-        <div class="stat-number" style="font-size:24px;">
-            {% if user.verified_discord %}Yes{% else %}No{% endif %}
-        </div>
-    </div>
-
-    <div class="card">
-        <div class="subtle">Website Approval</div>
-        <div class="stat-number" style="font-size:24px;">
-            {% if link_data and link_data.approved %}Approved{% elif link_data %}Pending{% else %}Missing{% endif %}
-        </div>
-    </div>
-
-    <div class="card">
-        <div class="subtle">Rider Status</div>
-        <div class="stat-number" style="font-size:24px;">
-            {% if rider_data and rider_data.approved and rider_data.is_linked %}Race Ready{% elif rider_data %}Incomplete{% else %}Missing{% endif %}
-        </div>
-    </div>
+    <p><strong>User:</strong> {{ user.username }}</p>
+    <p><strong>Discord:</strong> {{ user.discord_username }}</p>
 </div>
 
 <div class="card">
     <h2>Account Status</h2>
 
-    <div class="pill">Discord: {{ user.discord_username or "Not linked" }}</div>
-    <div class="pill">Email: {{ user.email }}</div>
-
     {% if link_data %}
         <div class="pill">Link Status: {{ link_data.link_status }}</div>
-        <div class="pill">Steam ID: {{ link_data.steam_id or "Not linked" }}</div>
+        <div class="pill">Approved: {{ "Yes" if link_data.approved else "No" }}</div>
+    {% else %}
+        <p>No link data yet.</p>
     {% endif %}
 
     {% if rider_data %}
         <div class="pill">Rider: {{ rider_data.mxb_name }}</div>
         <div class="pill">Class: {{ rider_data.class_name }}</div>
-        <div class="pill">GUID: {{ "Saved" if rider_data.guid else "Missing" }}</div>
-        <div class="pill">Linked: {{ "Yes" if rider_data.is_linked else "No" }}</div>
-        <div class="pill">Approved: {{ "Yes" if rider_data.approved else "No" }}</div>
-    {% endif %}
-
-    <div style="margin-top:14px;">
-        <a class="btn" href="/link-accounts">Update Link Details</a>
-        <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
-    </div>
-</div>
-
-<div class="card">
-    <h2>1W Status</h2>
-    {% if one_w_roles %}
-        {% for role in one_w_roles %}
-            <div class="pill">1W {{ role.series }} {{ role.class_name }} - {{ role.pts }} pts</div>
-        {% endfor %}
-    {% else %}
-        <p>No current 1W title yet.</p>
     {% endif %}
 </div>
 
 <div class="card">
     <h2>Next Event</h2>
-    {% if next_event %}
-        <div class="pill">Event: {{ next_event.name }}</div>
-        <div class="pill">Series: {{ next_event.series }}</div>
-        <div class="pill">Class: {{ next_event.class_name }}</div>
-        <div class="pill">Stage: {{ next_event.race_stage }}</div>
-        <div class="pill">Queue: {{ "Open" if next_event.queue_open else "Closed" }}</div>
-        <div class="pill">Status: {{ next_event.status }}</div>
-    {% else %}
-        <p>No pending event found.</p>
-    {% endif %}
-</div>
 
-<div class="card">
-    <h2>How to Join Official Races</h2>
-    <ol style="line-height:1.8; color:#dddddd; padding-left:20px;">
-        <li>Log in with Discord</li>
-        <li>Link Steam using the Steam login button</li>
-        <li>Submit your MX Bikes rider name, class, and GUID</li>
-        <li>Wait for your dashboard to show Race Ready</li>
-        <li>Join the Discord server</li>
-        <li>When queue is open, react in Discord to receive the server password</li>
-    </ol>
+    {% if next_event %}
+        <p>{{ next_event.name }}</p>
+        <p>{{ next_event.series }} - {{ next_event.class_name }}</p>
+        <div class="pill">{{ next_event.race_stage }}</div>
+    {% else %}
+        <p>No upcoming event.</p>
+    {% endif %}
 </div>
 
 <div class="card">
     <h2>Recent Events</h2>
 
-    {% if recent_events %}
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Series</th>
-                    <th>Class</th>
-                    <th>Stage</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for e in recent_events %}
-                <tr>
-                    <td><a class="link" href="/event/{{ e.id }}">#{{ e.id }}</a></td>
-                    <td>{{ e.name }}</td>
-                    <td>{{ e.series }}</td>
-                    <td>{{ e.class_name }}</td>
-                    <td>{{ e.race_stage }}</td>
-                    <td>{{ e.status or "pending" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% else %}
-        <p>No recent events found.</p>
-    {% endif %}
+    <table>
+        <tr>
+            <th>Name</th>
+            <th>Series</th>
+            <th>Class</th>
+            <th>Status</th>
+        </tr>
+
+        {% for e in recent_events %}
+        <tr>
+            <td>{{ e.name }}</td>
+            <td>{{ e.series }}</td>
+            <td>{{ e.class_name }}</td>
+            <td>{{ e.race_stage }}</td>
+        </tr>
+        {% endfor %}
+    </table>
 </div>
+
 {% endblock %}
