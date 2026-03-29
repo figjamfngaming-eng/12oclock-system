@@ -1,262 +1,31 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>12 O'Clock Boyz</title>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            background: #0f0f14;
-            color: #ffffff;
-            font-family: Arial, sans-serif;
-        }
+{% extends "base.html" %}
+{% block content %}
 
-        .wrap {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 24px;
-        }
+<div class="card">
+    <h1>MX Bikes League - 12 O’Clock Boyz</h1>
 
-        .topbar {
-            background: #171722;
-            border-bottom: 1px solid #2e2e40;
-            padding: 18px 24px;
-        }
+    <p class="subtle">
+        Join the 12 O’Clock Boyz MX Bikes league. Compete in MXGP and SMX races,
+        earn points, and take the 1W championship.
+    </p>
 
-        .brand-row {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
+    <div style="margin-top:15px;">
+        <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
+        <a class="btn" href="/events">Events</a>
+        <a class="btn" href="/leaderboard">Leaderboard</a>
+    </div>
+</div>
 
-        .brand-row img {
-            height: 56px;
-            width: auto;
-            border-radius: 8px;
-            background: #111;
-            padding: 4px;
-        }
-
-        .brand {
-            font-size: 28px;
-            font-weight: bold;
-            color: #ffd54a;
-        }
-
-        .nav {
-            margin-top: 12px;
-            display: flex;
-            gap: 14px;
-            flex-wrap: wrap;
-        }
-
-        .nav a {
-            color: #c8a2ff;
-            text-decoration: none;
-            font-weight: bold;
-        }
-
-        .nav a:hover {
-            color: #ffd54a;
-        }
-
-        .card {
-            background: #1a1a26;
-            border: 1px solid #2b2b3a;
-            border-radius: 14px;
-            padding: 18px;
-            margin-bottom: 18px;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-        }
-
-        .stat-number {
-            font-size: 34px;
-            font-weight: bold;
-            color: #ffd54a;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 12px;
-        }
-
-        th, td {
-            text-align: left;
-            padding: 12px 10px;
-            border-bottom: 1px solid #2a2a38;
-        }
-
-        th {
-            color: #ffd54a;
-        }
-
-        .btn {
-            display: inline-block;
-            background: #6e38d5;
-            color: white;
-            border: none;
-            padding: 10px 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: bold;
-            margin-right: 8px;
-            margin-bottom: 8px;
-            text-decoration: none;
-        }
-
-        .btn:hover {
-            background: #7d49e0;
-        }
-
-        .btn-danger {
-            background: #b33a3a;
-        }
-
-        .btn-danger:hover {
-            background: #cc4a4a;
-        }
-
-        .btn-discord {
-            background: #5865F2;
-        }
-
-        .btn-discord:hover {
-            background: #6a75f5;
-        }
-
-        .pill {
-            display: inline-block;
-            background: #26263a;
-            color: #c8a2ff;
-            padding: 6px 10px;
-            border-radius: 999px;
-            margin-right: 8px;
-            margin-bottom: 8px;
-            font-size: 13px;
-        }
-
-        .subtle {
-            color: #bbbbc8;
-        }
-
-        .link {
-            color: #7dc4ff;
-            text-decoration: none;
-        }
-
-        .link:hover {
-            text-decoration: underline;
-        }
-
-        .live-row {
-            padding: 12px;
-            border-bottom: 1px solid #2a2a38;
-        }
-
-        .flash {
-            background: #2a2a3d;
-            border-left: 4px solid #ffd54a;
-            padding: 12px;
-            margin-bottom: 16px;
-            border-radius: 8px;
-        }
-
-        .form-row {
-            margin-bottom: 14px;
-        }
-
-        input,
-        select,
-        textarea {
-            width: 100%;
-            max-width: 420px;
-            padding: 10px;
-            border-radius: 8px;
-            border: 1px solid #444;
-            background: #101018;
-            color: white;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 6px;
-            font-weight: bold;
-        }
-
-        footer {
-            margin-top: 40px;
-            padding: 24px 0 10px 0;
-            border-top: 1px solid #2e2e40;
-            color: #999;
-            font-size: 14px;
-        }
-
-        @media (max-width: 700px) {
-            .brand {
-                font-size: 22px;
-            }
-
-            .wrap {
-                padding: 16px;
-            }
-
-            .topbar {
-                padding: 16px;
-            }
-
-            .brand-row img {
-                height: 44px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="topbar">
-        <div class="wrap">
-            <div class="brand-row">
-                <img src="/static/mxb-logo.png" alt="MX Bikes Logo">
-                <img src="/static/12oclock-logo.png" alt="12 O'Clock Boyz Logo">
-                <div class="brand">12 O'Clock Boyz</div>
-            </div>
-
-            <div class="nav">
-                <a href="/">Home</a>
-                <a href="/events">Events</a>
-                <a href="/leaderboard">Leaderboard</a>
-                <a href="/director">Director</a>
-                <a href="/live">Live</a>
-                <a href="/rules">Rules</a>
-                <a href="/signup">Sign Up</a>
-                <a href="/login">Login</a>
-                <a href="/link-accounts">Link Accounts</a>
-                <a href="/status">Status</a>
-            </div>
-        </div>
+<div class="stats">
+    <div class="card">
+        <div class="subtle">Riders</div>
+        <div class="stat-number">{{ riders_total }}</div>
     </div>
 
-    <div class="wrap">
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                {% for message in messages %}
-                    <div class="flash">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-
-        {% block content %}{% endblock %}
-
-        <footer>
-            © 2026 12 O'Clock Boyz. All rights reserved. MX Bikes names, logos, and related content belong to their respective owners.
-        </footer>
+    <div class="card">
+        <div class="subtle">Events</div>
+        <div class="stat-number">{{ events_total }}</div>
     </div>
-</body>
-</html>
+</div>
+
+{% endblock %}
