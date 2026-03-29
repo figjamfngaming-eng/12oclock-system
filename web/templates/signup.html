@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-
 {% block content %}
+
 <div class="card">
     <h1>Create Account</h1>
-    <p class="subtle">Sign up for a 12 O'Clock Boyz website account.</p>
+    <p class="subtle">Create your 12 O’Clock Boyz website account.</p>
 
     <form method="POST">
         <div class="form-row">
@@ -23,5 +23,11 @@
 
         <button class="btn" type="submit">Create Account</button>
     </form>
+
+    <div style="margin-top: 16px;">
+        <p class="subtle">Already have an account?</p>
+        <a class="link" href="/login">Go to login</a>
+    </div>
 </div>
+
 {% endblock %}
