@@ -4,21 +4,21 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-import requests
 import psycopg2
-from psycopg2.extras import RealDictCursor
+import requests
 from flask import (
     Flask,
+    flash,
+    jsonify,
+    redirect,
     render_template,
     request,
-    redirect,
-    url_for,
-    jsonify,
-    session,
-    flash,
     send_from_directory,
+    session,
+    url_for,
 )
-from werkzeug.security import generate_password_hash, check_password_hash
+from psycopg2.extras import RealDictCursor
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.getenv("SECRET_KEY", "change-this-now")
@@ -63,8 +63,10 @@ def ensure_schema():
     schema_path = os.path.abspath(schema_path)
     if not os.path.exists(schema_path):
         return
+
     with open(schema_path, "r", encoding="utf-8") as f:
         schema_sql = f.read()
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(schema_sql)
@@ -731,7 +733,6 @@ def dashboard():
             )
             next_event = cur.fetchone()
 
-            live_event = None
             cur.execute(
                 """
                 SELECT
@@ -764,7 +765,6 @@ def dashboard():
             )
             live_event = cur.fetchone()
 
-            recent_results = []
             cur.execute(
                 """
                 SELECT
@@ -1004,6 +1004,53 @@ def events():
     return render_template("events.html", events=events_list)
 
 
+@app.route("/event/<int:event_id>")
+def event_detail(event_id):
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    track_name,
+                    COALESCE(series, 'MXGP') AS series,
+                    class_name,
+                    race_stage,
+                    status,
+                    queue_open,
+                    start_time,
+                    created_by_name
+                FROM events
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (event_id,),
+            )
+            event = cur.fetchone()
+
+            if not event:
+                flash("Event not found.")
+                return redirect(url_for("events"))
+
+            cur.execute(
+                """
+                SELECT
+                    r.mxb_name,
+                    res.position,
+                    res.points
+                FROM results res
+                JOIN riders r ON r.id = res.rider_id
+                WHERE res.event_id = %s
+                ORDER BY res.position ASC NULLS LAST, r.mxb_name ASC
+                """,
+                (event_id,),
+            )
+            results = cur.fetchall()
+
+    return render_template("event.html", event=event, results=results)
+
+
 @app.route("/leaderboard")
 def leaderboard():
     with db() as conn:
@@ -1048,26 +1095,83 @@ def api_live():
             cur.execute(
                 """
                 SELECT
-                    e.id AS event_id,
-                    e.name,
-                    e.track_name,
-                    COALESCE(e.series, 'MXGP') AS series,
-                    e.class_name,
-                    e.status,
-                    e.queue_open,
-                    e.start_time,
-                    r.mxb_name,
-                    g.gate_order
-                FROM events e
-                LEFT JOIN gate_orders g ON g.event_id = e.id
-                LEFT JOIN riders r ON r.id = g.rider_id
-                WHERE e.status IN ('scheduled', 'queue_open', 'live')
-                ORDER BY e.start_time ASC, g.gate_order ASC NULLS LAST
+                    id,
+                    name,
+                    track_name,
+                    COALESCE(series, 'MXGP') AS series,
+                    class_name,
+                    race_stage,
+                    status,
+                    queue_open,
+                    start_time,
+                    created_by_name
+                FROM events
+                WHERE status IN ('scheduled', 'queue_open', 'live')
+                ORDER BY start_time ASC
+                LIMIT 1
                 """
             )
-            rows = cur.fetchall()
+            active_event = cur.fetchone()
 
-    return jsonify(rows)
+            if not active_event:
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        name,
+                        track_name,
+                        COALESCE(series, 'MXGP') AS series,
+                        class_name,
+                        race_stage,
+                        status,
+                        queue_open,
+                        start_time,
+                        created_by_name
+                    FROM events
+                    ORDER BY COALESCE(started_at, start_time, created_at) DESC NULLS LAST, id DESC
+                    LIMIT 1
+                    """
+                )
+                active_event = cur.fetchone()
+
+            gates = []
+            results = []
+
+            if active_event:
+                cur.execute(
+                    """
+                    SELECT
+                        r.mxb_name,
+                        g.gate_order
+                    FROM gate_orders g
+                    JOIN riders r ON r.id = g.rider_id
+                    WHERE g.event_id = %s
+                    ORDER BY g.gate_order ASC
+                    """,
+                    (active_event["id"],),
+                )
+                gates = cur.fetchall()
+
+                cur.execute(
+                    """
+                    SELECT
+                        r.mxb_name,
+                        res.position,
+                        res.points
+                    FROM results res
+                    JOIN riders r ON r.id = res.rider_id
+                    WHERE res.event_id = %s
+                    ORDER BY res.position ASC NULLS LAST, r.mxb_name ASC
+                    """,
+                    (active_event["id"],),
+                )
+                results = cur.fetchall()
+
+    return jsonify({
+        "event": active_event,
+        "gates": gates,
+        "results": results,
+    })
 
 
 @app.route("/api/dashboard/live")
@@ -1208,7 +1312,7 @@ def api_me_mods():
     if not user:
         return jsonify({"error": "not_logged_in"}), 401
 
-    link_data, rider_data, _ = fetch_logged_in_link_bundle(user)
+    _, rider_data, _ = fetch_logged_in_link_bundle(user)
     if not rider_data:
         return jsonify([])
 
