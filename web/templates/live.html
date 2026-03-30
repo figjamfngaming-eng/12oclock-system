@@ -1,92 +1,86 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="card">
-    <h1>Live Race Status</h1>
-    <p class="subtle">Updates automatically.</p>
-</div>
+@app.route("/api/live")
+def api_live():
+    with db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # First try to get an active event
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    track_name,
+                    COALESCE(series, 'MXGP') AS series,
+                    class_name,
+                    race_stage,
+                    status,
+                    queue_open,
+                    start_time,
+                    created_by_name
+                FROM events
+                WHERE status IN ('scheduled', 'queue_open', 'live')
+                ORDER BY start_time ASC
+                LIMIT 1
+                """
+            )
+            active_event = cur.fetchone()
 
-<div class="card" id="live-event-box">
-    <p>Loading live event...</p>
-</div>
+            # If nothing is active, get the most recent event instead
+            if not active_event:
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        name,
+                        track_name,
+                        COALESCE(series, 'MXGP') AS series,
+                        class_name,
+                        race_stage,
+                        status,
+                        queue_open,
+                        start_time,
+                        created_by_name
+                    FROM events
+                    ORDER BY COALESCE(started_at, start_time, created_at) DESC NULLS LAST, id DESC
+                    LIMIT 1
+                    """
+                )
+                active_event = cur.fetchone()
 
-<div class="card" id="live-gates-box">
-    <p>Loading gate / live event data...</p>
-</div>
+            gates = []
+            results = []
 
-<div class="card" id="live-results-box">
-    <p>Loading recent results...</p>
-</div>
+            if active_event:
+                cur.execute(
+                    """
+                    SELECT
+                        r.mxb_name,
+                        g.gate_order
+                    FROM gate_orders g
+                    JOIN riders r ON r.id = g.rider_id
+                    WHERE g.event_id = %s
+                    ORDER BY g.gate_order ASC
+                    """,
+                    (active_event["id"],),
+                )
+                gates = cur.fetchall()
 
-<script>
-async function loadLivePage() {
-    try {
-        const [dashRes, liveRes, resultsRes] = await Promise.all([
-            fetch("/api/dashboard/live"),
-            fetch("/api/live"),
-            fetch("/api/results/recent")
-        ]);
+                cur.execute(
+                    """
+                    SELECT
+                        r.mxb_name,
+                        res.position,
+                        res.points
+                    FROM results res
+                    JOIN riders r ON r.id = res.rider_id
+                    WHERE res.event_id = %s
+                    ORDER BY res.position ASC NULLS LAST, r.mxb_name ASC
+                    """,
+                    (active_event["id"],),
+                )
+                results = cur.fetchall()
 
-        const dash = await dashRes.json();
-        const liveRows = await liveRes.json();
-        const results = await resultsRes.json();
-
-        const eventBox = document.getElementById("live-event-box");
-        const gatesBox = document.getElementById("live-gates-box");
-        const resultsBox = document.getElementById("live-results-box");
-
-        if (!dash.event) {
-            eventBox.innerHTML = "<p>No live or queued event right now.</p>";
-        } else {
-            eventBox.innerHTML = `
-                <h2>${dash.event.name}</h2>
-                <div class="pill">${dash.event.series}</div>
-                <div class="pill">${dash.event.class_name}</div>
-                <div class="pill">Track: ${dash.event.track_name}</div>
-                <div class="pill">Status: ${dash.event.status}</div>
-                <div class="pill">Queue: ${dash.event.queue_total ?? 0}</div>
-            `;
-        }
-
-        if (!liveRows.length) {
-            gatesBox.innerHTML = "<p>No live gate or event order data yet.</p>";
-        } else {
-            let html = `<h2>Live Event Feed</h2><table><thead><tr><th>Event</th><th>Series</th><th>Class</th><th>Rider</th><th>Gate</th><th>Status</th></tr></thead><tbody>`;
-            for (const row of liveRows) {
-                html += `<tr>
-                    <td>${row.name ?? ""}</td>
-                    <td>${row.series ?? ""}</td>
-                    <td>${row.class_name ?? ""}</td>
-                    <td>${row.mxb_name ?? ""}</td>
-                    <td>${row.gate_order ?? ""}</td>
-                    <td>${row.status ?? ""}</td>
-                </tr>`;
-            }
-            html += "</tbody></table>";
-            gatesBox.innerHTML = html;
-        }
-
-        if (!results.length) {
-            resultsBox.innerHTML = "<p>No recent results yet.</p>";
-        } else {
-            let html = `<h2>Recent Results</h2><table><thead><tr><th>Event</th><th>Rider</th><th>Pos</th><th>Points</th></tr></thead><tbody>`;
-            for (const row of results.slice(0, 20)) {
-                html += `<tr>
-                    <td>${row.series} ${row.class_name} - ${row.track_name}</td>
-                    <td>${row.mxb_name}</td>
-                    <td>${row.position ?? ""}</td>
-                    <td>${row.points ?? 0}</td>
-                </tr>`;
-            }
-            html += "</tbody></table>`;
-            resultsBox.innerHTML = html;
-        }
-    } catch (err) {
-        document.getElementById("live-event-box").innerHTML = "<p>Failed to load live data.</p>";
-        document.getElementById("live-gates-box").innerHTML = "<p>Failed to load live event feed.</p>";
-        document.getElementById("live-results-box").innerHTML = "<p>Failed to load recent results.</p>";
-    }
-}
-loadLivePage();
-setInterval(loadLivePage, 5000);
-</script>
-{% endblock %}
+    return jsonify({
+        "event": active_event,
+        "gates": gates,
+        "results": results,
+    })
