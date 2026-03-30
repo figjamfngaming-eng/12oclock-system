@@ -3,10 +3,18 @@
 <div class="card">
     <h1>Login</h1>
     <form method="POST">
-        <div class="form-row"><label>Email</label><input type="email" name="email" required></div>
-        <div class="form-row"><label>Password</label><input type="password" name="password" required></div>
+        <div class="form-row">
+            <label>Email</label>
+            <input type="email" name="email" required>
+        </div>
+        <div class="form-row">
+            <label>Password</label>
+            <input type="password" name="password" required>
+        </div>
         <button class="btn" type="submit">Login</button>
     </form>
-    <div style="margin-top:20px;"><a class="btn btn-discord" href="/login/discord">Login with Discord</a></div>
+    <div style="margin-top:20px;">
+        <a class="btn btn-discord" href="/login/discord">Login with Discord</a>
+    </div>
 </div>
 {% endblock %}
