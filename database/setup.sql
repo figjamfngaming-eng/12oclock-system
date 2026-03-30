@@ -144,4 +144,78 @@ CREATE INDEX IF NOT EXISTS idx_suspensions_lookup
 ON suspensions(discord_user_id, steam_id, rider_guid, is_active);
 
 CREATE INDEX IF NOT EXISTS idx_mod_uploads_status_created_at
+
+    CREATE TABLE IF NOT EXISTS championship_series (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    discipline TEXT NOT NULL, -- MXGP or SMX
+    season_name TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS championship_rounds (
+    id BIGSERIAL PRIMARY KEY,
+    series_id BIGINT NOT NULL REFERENCES championship_series(id) ON DELETE CASCADE,
+    round_number INTEGER NOT NULL,
+    round_name TEXT NOT NULL,
+    track_name TEXT NOT NULL,
+    class_name TEXT NOT NULL,
+    scheduled_start TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'scheduled', -- scheduled/live/finished
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS round_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    round_id BIGINT NOT NULL REFERENCES championship_rounds(id) ON DELETE CASCADE,
+    session_type TEXT NOT NULL, -- qualifier/race1/race2
+    session_order INTEGER NOT NULL,
+    event_id BIGINT REFERENCES events(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'scheduled', -- scheduled/live/finished
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    UNIQUE(round_id, session_type)
+);
+
+CREATE TABLE IF NOT EXISTS session_results (
+    id BIGSERIAL PRIMARY KEY,
+    session_id BIGINT NOT NULL REFERENCES round_sessions(id) ON DELETE CASCADE,
+    rider_id BIGINT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    position INTEGER,
+    points INTEGER NOT NULL DEFAULT 0,
+    gate_pick INTEGER,
+    laps_completed INTEGER,
+    total_time_ms BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(session_id, rider_id)
+);
+
+CREATE TABLE IF NOT EXISTS round_overall_results (
+    id BIGSERIAL PRIMARY KEY,
+    round_id BIGINT NOT NULL REFERENCES championship_rounds(id) ON DELETE CASCADE,
+    rider_id BIGINT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    overall_position INTEGER,
+    total_points INTEGER NOT NULL DEFAULT 0,
+    moto1_points INTEGER NOT NULL DEFAULT 0,
+    moto2_points INTEGER NOT NULL DEFAULT 0,
+    qualifier_position INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(round_id, rider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_championship_rounds_series_id
+ON championship_rounds(series_id);
+
+CREATE INDEX IF NOT EXISTS idx_round_sessions_round_id
+ON round_sessions(round_id);
+
+CREATE INDEX IF NOT EXISTS idx_round_sessions_event_id
+ON round_sessions(event_id);
+
+CREATE INDEX IF NOT EXISTS idx_session_results_session_id
+ON session_results(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_round_overall_results_round_id
+ON round_overall_results(round_id);
 ON mod_uploads(status, created_at);
