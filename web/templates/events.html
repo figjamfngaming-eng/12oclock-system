@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h1>Events</h1>
+    {% if events %}
+    <table>
+        <thead><tr><th>ID</th><th>Name</th><th>Series</th><th>Class</th><th>Track</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for e in events %}
+            <tr><td><a href="/event/{{ e.id }}">#{{ e.id }}</a></td><td>{{ e.name }}</td><td>{{ e.series }}</td><td>{{ e.class_name }}</td><td>{{ e.track_name }}</td><td>{{ e.status }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No events yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

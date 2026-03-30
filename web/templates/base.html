@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>12 O’Clock Boyz | MX Bikes League</title>
+    <meta name="description" content="12 O’Clock Boyz is an MX Bikes league with live results, leaderboards, race winners, and 1W champions.">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="topbar">
+    <div class="wrap nav-flex">
+        <div class="brand">12 O’Clock Boyz</div>
+        <div class="nav">
+            <a href="/">Home</a>
+            <a href="/events">Events</a>
+            <a href="/leaderboard">Leaderboard</a>
+            <a href="/rules">Rules</a>
+            <a href="/live">Live</a>
+        </div>
+        <div class="nav-right">
+            {% if logged_in_user %}
+                <span class="pill">{{ logged_in_user.discord_username or logged_in_user.username }}</span>
+                <a class="btn" href="/dashboard">Dashboard</a>
+                <a class="btn" href="/link-accounts">Link</a>
+            {% else %}
+                <a class="btn" href="/signup">Sign Up</a>
+                <a class="btn" href="/login">Login</a>
+            {% endif %}
+            <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Discord</a>
+        </div>
+    </div>
+</div>
+
+<div class="wrap">
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+    <footer>© 2026 12 O’Clock Boyz — All Rights Reserved</footer>
+</div>
+</body>
+</html>

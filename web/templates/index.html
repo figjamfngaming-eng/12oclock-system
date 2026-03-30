@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h1>12 O’Clock Boyz MX Bikes League</h1>
+    <p class="subtle">Official MXGP and SMX racing, live leaderboard, winner feed, race announcements, and 1W championship holders.</p>
+    <div style="margin-top:15px;">
+        <a class="btn btn-discord" href="{{ discord_invite_url }}" target="_blank">Join Discord</a>
+        <a class="btn" href="/events">Events</a>
+        <a class="btn" href="/leaderboard">Leaderboard</a>
+    </div>
+</div>
+
+<div class="stats">
+    <div class="card"><div class="subtle">Riders</div><div class="stat-number">{{ riders_total }}</div></div>
+    <div class="card"><div class="subtle">Events</div><div class="stat-number">{{ events_total }}</div></div>
+    <div class="card"><div class="subtle">Live Status</div><div class="stat-number" style="font-size:24px;">{% if live_state and live_state.is_live %}LIVE{% else %}Offline{% endif %}</div></div>
+</div>
+
+<div class="card">
+    <h2>Current Live Event</h2>
+    {% if live_state and live_state.is_live %}
+        <div class="pill">{{ live_state.series }}</div>
+        <div class="pill">{{ live_state.class_name }}</div>
+        <div class="pill">Track: {{ live_state.track_name }}</div>
+        <div class="pill">Server: {{ live_state.server_name }}</div>
+    {% else %}
+        <p>No live race right now.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Latest Announcements</h2>
+    {% for item in announcements %}
+        <div class="live-row"><strong>{{ item.title }}</strong><br><span class="subtle">{{ item.body }}</span></div>
+    {% else %}
+        <p>No announcements yet.</p>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <h2>Winner Feed</h2>
+    {% for item in winner_feed %}
+        <div class="live-row"><strong>{{ item.rider_name }}</strong> <span class="pill">{{ item.series }}</span> <span class="pill">{{ item.class_name }}</span> <span class="pill">{{ item.feed_type }}</span> <span class="pill">{{ item.points }} pts</span></div>
+    {% else %}
+        <p>No winners yet.</p>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <h2>Live Results</h2>
+    <div id="home-live-results"><p>No live results yet.</p></div>
+</div>
+
+<div class="card">
+    <h2>Top Leaderboard</h2>
+    {% if top_leaderboard %}
+    <table>
+        <thead><tr><th>Rider</th><th>Class</th><th>Points</th></tr></thead>
+        <tbody>
+        {% for row in top_leaderboard %}
+            <tr><td>{{ row.mxb_name }}</td><td>{{ row.class_name }}</td><td>{{ row.pts }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <p>No leaderboard data yet.</p>
+    {% endif %}
+</div>
+
+<script>
+async function loadHomeLiveResults() {
+    try {
+        const response = await fetch("/api/live_results");
+        const data = await response.json();
+        const box = document.getElementById("home-live-results");
+
+        if (!data.event) {
+            box.innerHTML = "<p>No live event right now.</p>";
+            return;
+        }
+
+        let html = `<div class="pill">${data.event.name}</div><div class="pill">${data.event.series}</div><div class="pill">${data.event.class_name}</div><div class="pill">Track: ${data.event.track_name}</div>`;
+        if (!data.results.length) {
+            html += "<p style='margin-top:12px;'>No live standings yet.</p>";
+            box.innerHTML = html;
+            return;
+        }
+
+        html += `<table><thead><tr><th>Pos</th><th>Rider</th><th>Laps</th><th>Best Lap</th><th>Gap</th></tr></thead><tbody>`;
+        for (const row of data.results) {
+            html += `<tr><td>${row.position ?? ""}</td><td>${row.rider_name ?? ""}</td><td>${row.laps ?? 0}</td><td>${row.best_lap ?? ""}</td><td>${row.gap ?? ""}</td></tr>`;
+        }
+        html += "</tbody></table>";
+        box.innerHTML = html;
+    } catch (err) {
+        document.getElementById("home-live-results").innerHTML = "<p>Failed to load live results.</p>";
+    }
+}
+loadHomeLiveResults();
+setInterval(loadHomeLiveResults, 5000);
+</script>
+{% endblock %}

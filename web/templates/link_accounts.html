@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h1>Link Accounts</h1>
+    <p class="subtle">Log in with Discord, link Steam, then save your MX Bikes rider details.</p>
+</div>
+
+<div class="card">
+    <h2>Step 1: Discord</h2>
+    <div class="pill">Discord ID: {{ oauth_discord_id or "Not linked yet" }}</div>
+    <div class="pill">Discord Username: {{ oauth_discord_username or "Not linked yet" }}</div>
+    {% if not oauth_discord_id %}
+        <a class="btn btn-discord" href="/login/discord">Login with Discord</a>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Step 2: Steam</h2>
+    <a class="btn" href="/auth/steam">Link Steam with Steam Login</a>
+</div>
+
+<div class="card">
+    <h2>Step 3: Rider Details</h2>
+    <form method="POST">
+        <div class="form-row"><label>Discord ID</label><input type="text" name="discord_id" value="{{ oauth_discord_id or (link_data.discord_id if link_data else '') }}" required></div>
+        <div class="form-row"><label>Discord Username</label><input type="text" name="discord_username" value="{{ oauth_discord_username or (link_data.discord_username if link_data else '') }}" required></div>
+        <div class="form-row"><label>Steam ID</label><input type="text" name="steam_id" value="{{ link_data.steam_id if link_data else '' }}"></div>
+        <div class="form-row"><label>Steam Name</label><input type="text" name="steam_name" value="{{ link_data.steam_name if link_data else '' }}"></div>
+        <div class="form-row"><label>MX Bikes Rider Name</label><input type="text" name="rider_name" value="{{ rider_data.mxb_name if rider_data else '' }}"></div>
+        <div class="form-row"><label>Rider Class</label><input type="text" name="rider_class" value="{{ rider_data.class_name if rider_data else '' }}" placeholder="450 or 250F"></div>
+        <div class="form-row"><label>Rider GUID</label><input type="text" name="rider_guid" value="{{ rider_data.guid if rider_data else '' }}"></div>
+        <button class="btn" type="submit">Save Rider Details</button>
+    </form>
+</div>
+{% endblock %}

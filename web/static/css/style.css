@@ -1,0 +1,20 @@
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0f;--panel:#13131b;--border:#2a2a38;--text:#f5f7ff;--muted:#a7adbf;--gold:#f4c542;--purple:#7a3cff;--discord:#5865f2}
+body{background:linear-gradient(180deg,#09090d 0%,#0d0d14 100%);color:var(--text);font-family:Arial,Helvetica,sans-serif}
+.wrap{width:min(1100px,calc(100% - 32px));margin:0 auto}
+.topbar{position:sticky;top:0;z-index:50;background:rgba(10,10,15,.95);border-bottom:1px solid rgba(255,255,255,.06)}
+.nav-flex{min-height:76px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:14px 0}
+.brand{font-size:1.5rem;font-weight:800;color:var(--gold)}
+.nav{display:flex;gap:12px;flex-wrap:wrap}.nav a{color:var(--muted);font-weight:700;padding:8px 12px;border-radius:10px}
+.nav-right{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.card{background:linear-gradient(180deg,rgba(26,26,36,.98),rgba(18,18,27,.98));border:1px solid var(--border);border-radius:16px;padding:22px;margin:18px 0}
+.subtle{color:var(--muted)}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:18px 0}
+.stat-number{font-size:2rem;font-weight:800;color:var(--gold);margin-top:6px}
+.pill{display:inline-flex;align-items:center;background:rgba(122,60,255,.12);color:#d8c7ff;border:1px solid rgba(122,60,255,.22);padding:7px 12px;border-radius:999px;font-size:.86rem;font-weight:700;margin:6px 8px 0 0}
+.flash{background:rgba(244,197,66,.12);color:#ffe7a2;border-left:5px solid var(--gold);border-radius:12px;padding:14px 16px;margin:18px 0}
+.btn{display:inline-flex;align-items:center;justify-content:center;background:var(--purple);color:#fff;border:none;border-radius:12px;padding:11px 16px;font-weight:800;text-decoration:none}
+.btn-discord{background:var(--discord)}
+input,select,textarea{width:100%;background:#0e0e15;color:var(--text);border:1px solid #323246;border-radius:12px;padding:12px 14px;font-size:.96rem}
+.form-row{margin-bottom:16px}label{display:block;font-size:.95rem;font-weight:800;margin-bottom:7px;color:var(--text)}
+table{width:100%;border-collapse:collapse;margin-top:12px;background:rgba(255,255,255,.015)}th,td{text-align:left;padding:14px 12px;border-bottom:1px solid rgba(255,255,255,.06)}th{color:var(--gold)}
+.live-row{padding:14px 12px;border-bottom:1px solid rgba(255,255,255,.06)}footer{margin:28px 0 34px;padding:18px 0 8px;color:#8a91a5;text-align:center}

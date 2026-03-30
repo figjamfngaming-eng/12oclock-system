@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h1>Dashboard</h1>
+    <p class="subtle">Welcome, {{ user.discord_username or user.username }}</p>
+</div>
+
+<div class="stats">
+    <div class="card"><div class="subtle">Discord Verified</div><div class="stat-number" style="font-size:24px;">{% if user.verified_discord %}Yes{% else %}No{% endif %}</div></div>
+    <div class="card"><div class="subtle">Website Approval</div><div class="stat-number" style="font-size:24px;">{% if link_data and link_data.approved %}Approved{% elif link_data %}Pending{% else %}Missing{% endif %}</div></div>
+    <div class="card"><div class="subtle">Rider Status</div><div class="stat-number" style="font-size:24px;">{% if rider_data and rider_data.approved and rider_data.is_linked %}Race Ready{% elif rider_data %}Incomplete{% else %}Missing{% endif %}</div></div>
+</div>
+
+<div class="card">
+    <h2>Account Status</h2>
+    <div class="pill">Discord: {{ user.discord_username or "Not linked" }}</div>
+    <div class="pill">Email: {{ user.email }}</div>
+    {% if link_data %}
+        <div class="pill">Link Status: {{ link_data.link_status }}</div>
+        <div class="pill">Steam ID: {{ link_data.steam_id or "Not linked" }}</div>
+    {% endif %}
+    {% if rider_data %}
+        <div class="pill">Rider: {{ rider_data.mxb_name }}</div>
+        <div class="pill">Class: {{ rider_data.class_name }}</div>
+        <div class="pill">GUID: {{ "Saved" if rider_data.guid else "Missing" }}</div>
+    {% endif %}
+</div>
+{% endblock %}
