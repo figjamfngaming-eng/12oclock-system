@@ -1,86 +1,122 @@
-@app.route("/api/live")
-def api_live():
-    with db() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # First try to get an active event
-            cur.execute(
-                """
-                SELECT
-                    id,
-                    name,
-                    track_name,
-                    COALESCE(series, 'MXGP') AS series,
-                    class_name,
-                    race_stage,
-                    status,
-                    queue_open,
-                    start_time,
-                    created_by_name
-                FROM events
-                WHERE status IN ('scheduled', 'queue_open', 'live')
-                ORDER BY start_time ASC
-                LIMIT 1
-                """
-            )
-            active_event = cur.fetchone()
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h1>Live Race Status</h1>
+    <p class="subtle">Shows the current live event, or the most recent finished event if nothing is currently running.</p>
+</div>
 
-            # If nothing is active, get the most recent event instead
-            if not active_event:
-                cur.execute(
-                    """
-                    SELECT
-                        id,
-                        name,
-                        track_name,
-                        COALESCE(series, 'MXGP') AS series,
-                        class_name,
-                        race_stage,
-                        status,
-                        queue_open,
-                        start_time,
-                        created_by_name
-                    FROM events
-                    ORDER BY COALESCE(started_at, start_time, created_at) DESC NULLS LAST, id DESC
-                    LIMIT 1
-                    """
-                )
-                active_event = cur.fetchone()
+<div class="card" id="live-event-box">
+    <p>Loading live event...</p>
+</div>
 
-            gates = []
-            results = []
+<div class="card" id="live-gates-box">
+    <p>Loading gate data...</p>
+</div>
 
-            if active_event:
-                cur.execute(
-                    """
-                    SELECT
-                        r.mxb_name,
-                        g.gate_order
-                    FROM gate_orders g
-                    JOIN riders r ON r.id = g.rider_id
-                    WHERE g.event_id = %s
-                    ORDER BY g.gate_order ASC
-                    """,
-                    (active_event["id"],),
-                )
-                gates = cur.fetchall()
+<div class="card" id="live-results-box">
+    <p>Loading results...</p>
+</div>
 
-                cur.execute(
-                    """
-                    SELECT
-                        r.mxb_name,
-                        res.position,
-                        res.points
-                    FROM results res
-                    JOIN riders r ON r.id = res.rider_id
-                    WHERE res.event_id = %s
-                    ORDER BY res.position ASC NULLS LAST, r.mxb_name ASC
-                    """,
-                    (active_event["id"],),
-                )
-                results = cur.fetchall()
+<script>
+async function loadLivePage() {
+    try {
+        const response = await fetch("/api/live");
+        const data = await response.json();
 
-    return jsonify({
-        "event": active_event,
-        "gates": gates,
-        "results": results,
-    })
+        const eventBox = document.getElementById("live-event-box");
+        const gatesBox = document.getElementById("live-gates-box");
+        const resultsBox = document.getElementById("live-results-box");
+
+        if (!data.event) {
+            eventBox.innerHTML = "<p>No live or recent event found.</p>";
+            gatesBox.innerHTML = "<p>No gate data available.</p>";
+            resultsBox.innerHTML = "<p>No results available.</p>";
+            return;
+        }
+
+        eventBox.innerHTML = `
+            <h2>${data.event.name || "Event"}</h2>
+            <div class="pill">${data.event.series || ""}</div>
+            <div class="pill">${data.event.class_name || ""}</div>
+            <div class="pill">Track: ${data.event.track_name || ""}</div>
+            <div class="pill">Stage: ${data.event.race_stage || ""}</div>
+            <div class="pill">Status: ${data.event.status || ""}</div>
+            <div class="pill">Start: ${data.event.start_time || ""}</div>
+            <div class="pill">Created By: ${data.event.created_by_name || "Unknown"}</div>
+        `;
+
+        if (data.gates && data.gates.length) {
+            let gatesHtml = `
+                <h2>Gate Order</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Rider</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const row of data.gates) {
+                gatesHtml += `
+                    <tr>
+                        <td>${row.mxb_name || ""}</td>
+                        <td>${row.gate_order ?? ""}</td>
+                    </tr>
+                `;
+            }
+
+            gatesHtml += `
+                    </tbody>
+                </table>
+            `;
+            gatesBox.innerHTML = gatesHtml;
+        } else {
+            gatesBox.innerHTML = "<p>No gate order saved yet.</p>";
+        }
+
+        if (data.results && data.results.length) {
+            let resultsHtml = `
+                <h2>Results</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Rider</th>
+                            <th>Position</th>
+                            <th>Points</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const row of data.results) {
+                resultsHtml += `
+                    <tr>
+                        <td>${row.mxb_name || ""}</td>
+                        <td>${row.position ?? ""}</td>
+                        <td>${row.points ?? 0}</td>
+                    </tr>
+                `;
+            }
+
+            resultsHtml += `
+                    </tbody>
+                </table>
+            `;
+            resultsBox.innerHTML = resultsHtml;
+        } else {
+            resultsBox.innerHTML = "<p>No results saved yet.</p>";
+        }
+
+    } catch (err) {
+        document.getElementById("live-event-box").innerHTML = "<p>Failed to load live event.</p>";
+        document.getElementById("live-gates-box").innerHTML = "<p>Failed to load gate data.</p>";
+        document.getElementById("live-results-box").innerHTML = "<p>Failed to load results.</p>";
+    }
+}
+
+loadLivePage();
+setInterval(loadLivePage, 5000);
+</script>
+{% endblock %}
