@@ -17,19 +17,65 @@
 <div class="card">
     <h2>Step 2: Steam</h2>
     <a class="btn" href="/auth/steam">Link Steam with Steam Login</a>
+    {% if link_data and link_data.relink_available_at %}
+        <p class="subtle" style="margin-top:12px;">Relink available after: {{ link_data.relink_available_at }}</p>
+    {% endif %}
 </div>
 
 <div class="card">
     <h2>Step 3: Rider Details</h2>
     <form method="POST">
-        <div class="form-row"><label>Discord ID</label><input type="text" name="discord_id" value="{{ oauth_discord_id or (link_data.discord_id if link_data else '') }}" required></div>
-        <div class="form-row"><label>Discord Username</label><input type="text" name="discord_username" value="{{ oauth_discord_username or (link_data.discord_username if link_data else '') }}" required></div>
-        <div class="form-row"><label>Steam ID</label><input type="text" name="steam_id" value="{{ link_data.steam_id if link_data else '' }}"></div>
-        <div class="form-row"><label>Steam Name</label><input type="text" name="steam_name" value="{{ link_data.steam_name if link_data else '' }}"></div>
-        <div class="form-row"><label>MX Bikes Rider Name</label><input type="text" name="rider_name" value="{{ rider_data.mxb_name if rider_data else '' }}"></div>
-        <div class="form-row"><label>Rider Class</label><input type="text" name="rider_class" value="{{ rider_data.class_name if rider_data else '' }}" placeholder="450 or 250F"></div>
-        <div class="form-row"><label>Rider GUID</label><input type="text" name="rider_guid" value="{{ rider_data.guid if rider_data else '' }}"></div>
+        <div class="form-row">
+            <label>Discord ID</label>
+            <input type="text" name="discord_id" value="{{ oauth_discord_id or (link_data.discord_id if link_data else '') }}" required>
+        </div>
+        <div class="form-row">
+            <label>Discord Username</label>
+            <input type="text" name="discord_username" value="{{ oauth_discord_username or (link_data.discord_username if link_data else '') }}" required>
+        </div>
+        <div class="form-row">
+            <label>Steam ID</label>
+            <input type="text" name="steam_id" value="{{ link_data.steam_id if link_data else '' }}" required>
+        </div>
+        <div class="form-row">
+            <label>Steam Name</label>
+            <input type="text" name="steam_name" value="{{ link_data.steam_name if link_data else '' }}">
+        </div>
+        <div class="form-row">
+            <label>MX Bikes Rider Name</label>
+            <input type="text" name="rider_name" value="{{ rider_data.mxb_name if rider_data else '' }}" required>
+        </div>
+        <div class="form-row">
+            <label>Rider Class</label>
+            <input type="text" name="rider_class" value="{{ rider_data.class_name if rider_data else '' }}" placeholder="450 or 250F" required>
+        </div>
+        <div class="form-row">
+            <label>Rider GUID</label>
+            <input type="text" name="rider_guid" value="{{ rider_data.guid if rider_data else '' }}" required>
+        </div>
         <button class="btn" type="submit">Save Rider Details</button>
     </form>
+</div>
+
+<div class="card">
+    <h2>Current Status</h2>
+    {% if link_data %}
+        <div class="pill">Approval: {{ "Approved" if link_data.approved else "Pending" }}</div>
+        <div class="pill">Link Status: {{ link_data.link_status }}</div>
+    {% else %}
+        <p>No account link saved yet.</p>
+    {% endif %}
+
+    {% if rider_data %}
+        <div class="pill">Rider: {{ rider_data.mxb_name }}</div>
+        <div class="pill">Class: {{ rider_data.class_name }}</div>
+        <div class="pill">Linked: {{ "Yes" if rider_data.is_linked else "No" }}</div>
+    {% endif %}
+
+    {% if suspension %}
+        <div class="pill">Suspension: Active</div>
+        <div class="pill">Reason: {{ suspension.reason }}</div>
+        <div class="pill">Ends: {{ suspension.ends_at or "Season" }}</div>
+    {% endif %}
 </div>
 {% endblock %}
