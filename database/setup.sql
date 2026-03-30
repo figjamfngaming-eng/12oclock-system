@@ -110,8 +110,38 @@ CREATE TABLE IF NOT EXISTS suspensions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_status_start_time ON events(status, start_time);
-CREATE INDEX IF NOT EXISTS idx_results_event_id ON results(event_id);
-CREATE INDEX IF NOT EXISTS idx_gate_orders_event_id ON gate_orders(event_id);
-CREATE INDEX IF NOT EXISTS idx_event_queue_event_id ON event_queue(event_id);
-CREATE INDEX IF NOT EXISTS idx_suspensions_lookup ON suspensions(discord_user_id, steam_id, rider_guid, is_active);
+CREATE TABLE IF NOT EXISTS mod_uploads (
+    id BIGSERIAL PRIMARY KEY,
+    discord_user_id TEXT NOT NULL,
+    discord_username TEXT,
+    original_filename TEXT NOT NULL,
+    stored_filename TEXT NOT NULL,
+    saved_path TEXT NOT NULL,
+    sha256 TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    detected_roots TEXT,
+    notes TEXT,
+    approved_by_discord_id TEXT,
+    approved_at TIMESTAMPTZ,
+    rejected_by_discord_id TEXT,
+    rejected_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_status_start_time
+ON events(status, start_time);
+
+CREATE INDEX IF NOT EXISTS idx_results_event_id
+ON results(event_id);
+
+CREATE INDEX IF NOT EXISTS idx_gate_orders_event_id
+ON gate_orders(event_id);
+
+CREATE INDEX IF NOT EXISTS idx_event_queue_event_id
+ON event_queue(event_id);
+
+CREATE INDEX IF NOT EXISTS idx_suspensions_lookup
+ON suspensions(discord_user_id, steam_id, rider_guid, is_active);
+
+CREATE INDEX IF NOT EXISTS idx_mod_uploads_status_created_at
+ON mod_uploads(status, created_at);
