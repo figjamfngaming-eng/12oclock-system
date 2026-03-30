@@ -6,9 +6,22 @@
 </div>
 
 <div class="stats">
-    <div class="card"><div class="subtle">Discord Verified</div><div class="stat-number" style="font-size:24px;">{% if user.verified_discord %}Yes{% else %}No{% endif %}</div></div>
-    <div class="card"><div class="subtle">Website Approval</div><div class="stat-number" style="font-size:24px;">{% if link_data and link_data.approved %}Approved{% elif link_data %}Pending{% else %}Missing{% endif %}</div></div>
-    <div class="card"><div class="subtle">Rider Status</div><div class="stat-number" style="font-size:24px;">{% if rider_data and rider_data.approved and rider_data.is_linked %}Race Ready{% elif rider_data %}Incomplete{% else %}Missing{% endif %}</div></div>
+    <div class="card">
+        <div class="subtle">Discord Verified</div>
+        <div class="stat-number" style="font-size:24px;">{% if user.verified_discord %}Yes{% else %}No{% endif %}</div>
+    </div>
+    <div class="card">
+        <div class="subtle">Website Approval</div>
+        <div class="stat-number" style="font-size:24px;">
+            {% if link_data and link_data.approved %}Approved{% elif link_data %}Pending{% else %}Missing{% endif %}
+        </div>
+    </div>
+    <div class="card">
+        <div class="subtle">Rider Status</div>
+        <div class="stat-number" style="font-size:24px;">
+            {% if rider_data and rider_data.approved and rider_data.is_linked %}Race Ready{% elif rider_data %}Incomplete{% else %}Missing{% endif %}
+        </div>
+    </div>
 </div>
 
 <div class="card">
@@ -18,11 +31,105 @@
     {% if link_data %}
         <div class="pill">Link Status: {{ link_data.link_status }}</div>
         <div class="pill">Steam ID: {{ link_data.steam_id or "Not linked" }}</div>
+        <div class="pill">Relink Available: {{ link_data.relink_available_at or "Not set" }}</div>
     {% endif %}
     {% if rider_data %}
         <div class="pill">Rider: {{ rider_data.mxb_name }}</div>
         <div class="pill">Class: {{ rider_data.class_name }}</div>
-        <div class="pill">GUID: {{ "Saved" if rider_data.guid else "Missing" }}</div>
+        <div class="pill">GUID: {{ rider_data.guid or "Missing" }}</div>
+    {% endif %}
+    {% if suspension %}
+        <div class="pill">Suspension: Active</div>
+        <div class="pill">Reason: {{ suspension.reason }}</div>
+        <div class="pill">Ends: {{ suspension.ends_at or "Season" }}</div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Live / Next Event</h2>
+    {% if live_event %}
+        <div class="pill">{{ live_event.series }}</div>
+        <div class="pill">{{ live_event.class_name }}</div>
+        <div class="pill">Track: {{ live_event.track_name }}</div>
+        <div class="pill">Status: {{ live_event.status }}</div>
+        <div class="pill">Queue: {{ live_event.queue_total or 0 }}</div>
+    {% elif next_event %}
+        <div class="pill">{{ next_event.series }}</div>
+        <div class="pill">{{ next_event.class_name }}</div>
+        <div class="pill">Track: {{ next_event.track_name }}</div>
+        <div class="pill">Status: {{ next_event.status }}</div>
+        <div class="pill">Start: {{ next_event.start_time }}</div>
+    {% else %}
+        <p>No event is currently scheduled.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Your Mod Uploads</h2>
+    {% if rider_mod_uploads %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>File</th>
+                <th>Status</th>
+                <th>Roots</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for m in rider_mod_uploads %}
+            <tr>
+                <td>#{{ m.id }}</td>
+                <td>{{ m.original_filename }}</td>
+                <td>{{ m.status }}</td>
+                <td>{{ m.detected_roots or "" }}</td>
+                <td>{{ m.created_at }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <p>No mod uploads yet.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Recent Results</h2>
+    {% if recent_results %}
+    <table>
+        <thead>
+            <tr>
+                <th>Event</th>
+                <th>Rider</th>
+                <th>Pos</th>
+                <th>Points</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in recent_results %}
+            <tr>
+                <td>{{ r.series }} {{ r.class_name }} - {{ r.track_name }}</td>
+                <td>{{ r.mxb_name }}</td>
+                <td>{{ r.position or "" }}</td>
+                <td>{{ r.points }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <p>No results yet.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>1W Championship Holds</h2>
+    {% if one_w_roles %}
+        {% for row in one_w_roles %}
+            <div class="pill">{{ row.series }} {{ row.class_name }} — {{ row.pts }} pts</div>
+        {% endfor %}
+    {% else %}
+        <p>No current 1W lead yet.</p>
     {% endif %}
 </div>
 {% endblock %}
