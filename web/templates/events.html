@@ -4,10 +4,28 @@
     <h1>Events</h1>
     {% if events %}
     <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Series</th><th>Class</th><th>Track</th><th>Status</th></tr></thead>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Series</th>
+                <th>Class</th>
+                <th>Track</th>
+                <th>Status</th>
+                <th>Queue</th>
+                <th>Start</th>
+            </tr>
+        </thead>
         <tbody>
         {% for e in events %}
-            <tr><td><a href="/event/{{ e.id }}">#{{ e.id }}</a></td><td>{{ e.name }}</td><td>{{ e.series }}</td><td>{{ e.class_name }}</td><td>{{ e.track_name }}</td><td>{{ e.status }}</td></tr>
+            <tr>
+                <td>#{{ e.id }}</td>
+                <td>{{ e.series }}</td>
+                <td>{{ e.class_name }}</td>
+                <td>{{ e.track_name }}</td>
+                <td>{{ e.status }}</td>
+                <td>{{ e.queue_total or 0 }}</td>
+                <td>{{ e.start_time or "" }}</td>
+            </tr>
         {% endfor %}
         </tbody>
     </table>
