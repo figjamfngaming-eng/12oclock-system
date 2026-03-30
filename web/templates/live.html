@@ -1,37 +1,92 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h1>Live Race Results</h1>
-    <p class="subtle">Updates every 5 seconds.</p>
+    <h1>Live Race Status</h1>
+    <p class="subtle">Updates automatically.</p>
 </div>
-<div class="card" id="live-results-box"><p>Loading live results...</p></div>
+
+<div class="card" id="live-event-box">
+    <p>Loading live event...</p>
+</div>
+
+<div class="card" id="live-gates-box">
+    <p>Loading gate / live event data...</p>
+</div>
+
+<div class="card" id="live-results-box">
+    <p>Loading recent results...</p>
+</div>
+
 <script>
-async function loadLiveResultsPage() {
+async function loadLivePage() {
     try {
-        const response = await fetch("/api/live_results");
-        const data = await response.json();
-        const box = document.getElementById("live-results-box");
-        if (!data.event) {
-            box.innerHTML = "<p>No live event right now.</p>";
-            return;
+        const [dashRes, liveRes, resultsRes] = await Promise.all([
+            fetch("/api/dashboard/live"),
+            fetch("/api/live"),
+            fetch("/api/results/recent")
+        ]);
+
+        const dash = await dashRes.json();
+        const liveRows = await liveRes.json();
+        const results = await resultsRes.json();
+
+        const eventBox = document.getElementById("live-event-box");
+        const gatesBox = document.getElementById("live-gates-box");
+        const resultsBox = document.getElementById("live-results-box");
+
+        if (!dash.event) {
+            eventBox.innerHTML = "<p>No live or queued event right now.</p>";
+        } else {
+            eventBox.innerHTML = `
+                <h2>${dash.event.name}</h2>
+                <div class="pill">${dash.event.series}</div>
+                <div class="pill">${dash.event.class_name}</div>
+                <div class="pill">Track: ${dash.event.track_name}</div>
+                <div class="pill">Status: ${dash.event.status}</div>
+                <div class="pill">Queue: ${dash.event.queue_total ?? 0}</div>
+            `;
         }
-        let html = `<h2>${data.event.name}</h2><div class="pill">${data.event.series}</div><div class="pill">${data.event.class_name}</div><div class="pill">Track: ${data.event.track_name}</div>`;
-        if (!data.results.length) {
-            html += "<p style='margin-top:12px;'>No live standings yet.</p>";
-            box.innerHTML = html;
-            return;
+
+        if (!liveRows.length) {
+            gatesBox.innerHTML = "<p>No live gate or event order data yet.</p>";
+        } else {
+            let html = `<h2>Live Event Feed</h2><table><thead><tr><th>Event</th><th>Series</th><th>Class</th><th>Rider</th><th>Gate</th><th>Status</th></tr></thead><tbody>`;
+            for (const row of liveRows) {
+                html += `<tr>
+                    <td>${row.name ?? ""}</td>
+                    <td>${row.series ?? ""}</td>
+                    <td>${row.class_name ?? ""}</td>
+                    <td>${row.mxb_name ?? ""}</td>
+                    <td>${row.gate_order ?? ""}</td>
+                    <td>${row.status ?? ""}</td>
+                </tr>`;
+            }
+            html += "</tbody></table>";
+            gatesBox.innerHTML = html;
         }
-        html += `<table><thead><tr><th>Pos</th><th>Rider</th><th>Laps</th><th>Best Lap</th><th>Gap</th><th>Status</th></tr></thead><tbody>`;
-        for (const row of data.results) {
-            html += `<tr><td>${row.position ?? ""}</td><td>${row.rider_name ?? ""}</td><td>${row.laps ?? 0}</td><td>${row.best_lap ?? ""}</td><td>${row.gap ?? ""}</td><td>${row.status ?? ""}</td></tr>`;
+
+        if (!results.length) {
+            resultsBox.innerHTML = "<p>No recent results yet.</p>";
+        } else {
+            let html = `<h2>Recent Results</h2><table><thead><tr><th>Event</th><th>Rider</th><th>Pos</th><th>Points</th></tr></thead><tbody>`;
+            for (const row of results.slice(0, 20)) {
+                html += `<tr>
+                    <td>${row.series} ${row.class_name} - ${row.track_name}</td>
+                    <td>${row.mxb_name}</td>
+                    <td>${row.position ?? ""}</td>
+                    <td>${row.points ?? 0}</td>
+                </tr>`;
+            }
+            html += "</tbody></table>`;
+            resultsBox.innerHTML = html;
         }
-        html += "</tbody></table>";
-        box.innerHTML = html;
     } catch (err) {
-        document.getElementById("live-results-box").innerHTML = "<p>Failed to load live results.</p>";
+        document.getElementById("live-event-box").innerHTML = "<p>Failed to load live data.</p>";
+        document.getElementById("live-gates-box").innerHTML = "<p>Failed to load live event feed.</p>";
+        document.getElementById("live-results-box").innerHTML = "<p>Failed to load recent results.</p>";
     }
 }
-loadLiveResultsPage();
-setInterval(loadLiveResultsPage, 5000);
+loadLivePage();
+setInterval(loadLivePage, 5000);
 </script>
 {% endblock %}
