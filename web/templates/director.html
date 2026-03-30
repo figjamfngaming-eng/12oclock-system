@@ -1,55 +1,40 @@
 {% extends "base.html" %}
-
 {% block content %}
 <div class="card">
-    <h2>Race Director Panel</h2>
-    <p class="subtle">Advance stages or clear results and gates.</p>
-
-    {% if events %}
-    <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Class</th>
-                <th>Stage</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for e in events %}
-            <tr>
-                <td>#{{ e.id }}</td>
-                <td>{{ e.name }}</td>
-                <td>{{ e.class_name }}</td>
-                <td>{{ e.race_stage }}</td>
-                <td>
-                    <form method="post" action="/director/action" style="display:inline;">
-                        <input type="hidden" name="event_id" value="{{ e.id }}">
-                        <input type="hidden" name="action" value="advance">
-                        <button class="btn" type="submit">Next Stage</button>
-                    </form>
-
-                    <form method="post" action="/director/action" style="display:inline;">
-                        <input type="hidden" name="event_id" value="{{ e.id }}">
-                        <input type="hidden" name="action" value="delete_results">
-                        <button class="btn btn-danger" type="submit">Clear Results</button>
-                    </form>
-
-                    <form method="post" action="/director/action" style="display:inline;">
-                        <input type="hidden" name="event_id" value="{{ e.id }}">
-                        <input type="hidden" name="action" value="delete_gates">
-                        <button class="btn btn-danger" type="submit">Clear Gates</button>
-                    </form>
-
-                    <a class="link" href="/event/{{ e.id }}">View</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>No events found.</p>
-    {% endif %}
+    <h1>Race Director Panel</h1>
+    <p class="subtle">Main event control is handled through the Discord Race Director panel. This page is for visibility only.</p>
 </div>
+
+<div class="card" id="director-live-box">
+    <p>Loading live race control data...</p>
+</div>
+
+<script>
+async function loadDirectorPage() {
+    try {
+        const response = await fetch("/api/dashboard/live");
+        const data = await response.json();
+        const box = document.getElementById("director-live-box");
+
+        if (!data.event) {
+            box.innerHTML = "<p>No active or scheduled event right now.</p>";
+            return;
+        }
+
+        box.innerHTML = `
+            <h2>${data.event.name}</h2>
+            <div class="pill">${data.event.series}</div>
+            <div class="pill">${data.event.class_name}</div>
+            <div class="pill">Track: ${data.event.track_name}</div>
+            <div class="pill">Status: ${data.event.status}</div>
+            <div class="pill">Queue: ${data.event.queue_total ?? 0}</div>
+            <div class="pill">Created By: ${data.event.created_by_name ?? "Unknown"}</div>
+        `;
+    } catch (err) {
+        document.getElementById("director-live-box").innerHTML = "<p>Failed to load director data.</p>";
+    }
+}
+loadDirectorPage();
+setInterval(loadDirectorPage, 5000);
+</script>
 {% endblock %}
