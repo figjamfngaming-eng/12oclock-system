@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Home - 12 O'Clock Boyz{% endblock %}{% block content %}
+<div class="card hero"><h1>12 O'Clock Boyz MX Bikes League</h1><p class="muted">Official MXGP and SMX racing, live leaderboard, winner feed, race announcements, and 1W championship holders.</p>
+<div class="links"><a class="pill" href="{{ discord_invite_url }}">Join Discord</a><a class="pill" href="/events">Events</a><a class="pill" href="/leaderboard">Leaderboard</a></div></div>
+<div class="grid grid-3">
+  <div class="card"><div class="muted">Riders</div><div class="stats">{{ riders_total }}</div></div>
+  <div class="card"><div class="muted">Events</div><div class="stats">{{ events_total }}</div></div>
+  <div class="card"><div class="muted">Live Status</div><div class="stats">{{ 'Online' if live_event else 'Offline' }}</div></div>
+</div>
+<div class="card"><h2>Current Live Event</h2>{% if live_event %}<div><strong>{{ live_event.series }} {{ live_event.class_name }}</strong> — {{ live_event.track_name }}</div><div class="muted">{{ live_event.status }}{% if live_event.start_time %} • {{ live_event.start_time }}{% endif %}</div>{% else %}<div class="muted">No live race right now.</div>{% endif %}</div>
+<div class="card"><h2>Next Event</h2>{% if next_event %}<div><strong>{{ next_event.series }} {{ next_event.class_name }}</strong> — {{ next_event.track_name }}</div><div class="muted">{{ next_event.status }}{% if next_event.start_time %} • {{ next_event.start_time }}{% endif %}</div>{% else %}<div class="muted">No upcoming event yet.</div>{% endif %}</div>
+<div class="card"><h2>1W Championship Holds</h2>{% if onew_holders %}<table><tr><th>Series</th><th>Class</th><th>Rider</th><th>Assigned</th></tr>{% for row in onew_holders %}<tr><td>{{ row.discipline }} {{ row.season_name or '' }}</td><td>{{ row.class_name }}</td><td>{{ row.mxb_name }}</td><td>{{ row.assigned_at }}</td></tr>{% endfor %}</table>{% else %}<div class="muted">No current 1W lead yet.</div>{% endif %}</div>
+<div class="card"><h2>Latest Events</h2><table><tr><th>ID</th><th>Series</th><th>Class</th><th>Track</th><th>Status</th></tr>{% for e in latest_events %}<tr><td><a href="/event/{{ e.id }}">#{{ e.id }}</a></td><td>{{ e.series }}</td><td>{{ e.class_name }}</td><td>{{ e.track_name }}</td><td>{{ e.status }}</td></tr>{% endfor %}</table></div>
+{% endblock %}

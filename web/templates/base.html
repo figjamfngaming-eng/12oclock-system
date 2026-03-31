@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}12 O'Clock Boyz{% endblock %}</title>
+  <style>
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#0b1020;color:#f3f5ff}
+    a{color:#8db4ff;text-decoration:none}.nav{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:16px 24px;background:#11182d;border-bottom:1px solid #25304f;position:sticky;top:0}
+    .brand{font-weight:800;font-size:30px;color:#ffd84d}.links{display:flex;gap:14px;flex-wrap:wrap}.pill{background:#6f3cff;color:white;padding:10px 16px;border-radius:14px;font-weight:700}
+    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}.card{background:#18213b;border:1px solid #2d3b64;border-radius:18px;padding:18px;margin-bottom:18px}
+    .grid{display:grid;gap:18px}.grid-3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}.grid-2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+    h1,h2,h3{margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #2b3555;text-align:left}th{color:#ffd84d}
+    .muted{color:#b8c0dd}.ok{color:#6cff96;font-weight:700}.warn{color:#ffd84d;font-weight:700}.bad{color:#ff7d7d;font-weight:700}
+    .flash{background:#43350f;border:1px solid #9c7a11;color:#ffe485;padding:12px;border-radius:14px;margin-bottom:16px}
+    input,select,button{padding:12px;border-radius:12px;border:1px solid #35446f;background:#0f1730;color:#fff}button{background:#6f3cff;font-weight:700;cursor:pointer}
+    form{display:grid;gap:12px}.hero{padding:24px}.stats{font-size:34px;font-weight:800;color:#ffd84d}
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="nav">
+    <div class="brand">12 O'Clock Boyz</div>
+    <div class="links">
+      <a href="/" class="pill">Home</a><a href="/events" class="pill">Events</a><a href="/leaderboard" class="pill">Leaderboard</a>
+      <a href="/championships" class="pill">Championships</a><a href="/live" class="pill">Live</a><a href="/rules" class="pill">Rules</a>
+      {% if logged_in_user %}
+      <a href="/dashboard" class="pill">{{ logged_in_user.username }}</a><a href="/link-accounts" class="pill">Link</a><a href="/logout" class="pill">Logout</a>
+      {% else %}
+      <a href="/login" class="pill">Login</a><a href="/signup" class="pill">Signup</a>
+      {% endif %}
+      <a href="{{ discord_invite_url }}" class="pill">Discord</a>
+    </div>
+  </div>
+  <div class="wrap">
+    {% with messages = get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

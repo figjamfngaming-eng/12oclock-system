@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block content %}
+<div class="card"><h1>Live</h1><div id="live-event" class="muted">Loading...</div></div>
+<div class="card"><h2>Live Session Results</h2><table id="live-session-table"><thead><tr><th>Session</th><th>Rider</th><th>Pos</th><th>Points</th><th>Gate</th></tr></thead><tbody></tbody></table></div>
+<div class="card"><h2>Overall</h2><table id="live-overall-table"><thead><tr><th>Overall</th><th>Rider</th><th>Total</th><th>M1</th><th>M2</th><th>Quali</th></tr></thead><tbody></tbody></table></div>
+{% endblock %}{% block scripts %}<script>
+async function loadLive(){const res=await fetch('/api/live');const data=await res.json();const eventDiv=document.getElementById('live-event');if(data.event){eventDiv.innerHTML=`<strong>${data.event.series} ${data.event.class_name}</strong> — ${data.event.track_name} <span class="muted">(${data.event.status})</span>`;}else{eventDiv.textContent='No live event.';}const sbody=document.querySelector('#live-session-table tbody');sbody.innerHTML='';(data.session_results||[]).forEach(r=>{sbody.innerHTML+=`<tr><td>${r.session_type||''}</td><td>${r.mxb_name||''}</td><td>${r.position ?? ''}</td><td>${r.points ?? ''}</td><td>${r.gate_pick ?? ''}</td></tr>`;});const obody=document.querySelector('#live-overall-table tbody');obody.innerHTML='';(data.overall||[]).forEach(r=>{obody.innerHTML+=`<tr><td>${r.overall_position ?? ''}</td><td>${r.mxb_name || ''}</td><td>${r.total_points ?? ''}</td><td>${r.moto1_points ?? ''}</td><td>${r.moto2_points ?? ''}</td><td>${r.qualifier_position ?? ''}</td></tr>`;});}
+loadLive();setInterval(loadLive,10000);
+</script>{% endblock %}
